@@ -222,10 +222,14 @@ export default function TaskFlowLanding() {
           <div style={{ maxWidth: "1280px", margin: "0 auto", padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
               <div style={{
-                width: "32px", height: "32px", borderRadius: "8px", background: "#13ecc8",
-                display: "flex", alignItems: "center", justifyContent: "center", color: "#0d1b19",
+                width: "32px", height: "32px", borderRadius: "8px", flexShrink: 0,
+                display: "flex", alignItems: "center", justifyContent: "center",
               }}>
-                <Icon name="task_alt" />
+                <img
+                  src="https://www.logoai.com/uploads/icon/2021/08/06/732ca933-7df8-43e8-b085-69466243c919.png"
+                  alt="TaskFlow logo"
+                  style={{ width: "26px", height: "26px", objectFit: "contain", display: "block" }}
+                />
               </div>
               <span style={{ fontWeight: 800, fontSize: "18px" }}>TaskFlow</span>
             </div>
