@@ -210,6 +210,13 @@ const buildPlansUrl = (baseUrl: string) =>
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
+const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
+
+type PendingPlanSelection = {
+  planName: string;
+  planSlug: string;
+  createdAt: number;
+};
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
@@ -254,6 +261,56 @@ const getStripePaymentLink = (planSlug: string): string => {
   const dynamicValue = env[dynamicKey];
 
   return (staticMap[planSlug] ?? dynamicValue ?? "").trim();
+};
+
+const savePendingPlanSelection = (planName: string, planSlug: string) => {
+  if (typeof window === "undefined") return;
+  const payload: PendingPlanSelection = {
+    planName,
+    planSlug,
+    createdAt: Date.now(),
+  };
+  try {
+    window.localStorage.setItem(pendingPlanStorageKey, JSON.stringify(payload));
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const readPendingPlanSelection = (): PendingPlanSelection | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(pendingPlanStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingPlanSelection>;
+    if (typeof parsed.planName !== "string" || typeof parsed.planSlug !== "string") {
+      return null;
+    }
+    return {
+      planName: parsed.planName,
+      planSlug: parsed.planSlug,
+      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : 0,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const clearPendingPlanSelection = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(pendingPlanStorageKey);
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const buildCompanyCreateUrl = (planName: string, planSlug: string) => {
+  const params = new URLSearchParams();
+  params.set("payment", "success");
+  if (planName) params.set("plan", planName);
+  if (planSlug) params.set("slug", planSlug);
+  return `/company/create?${params.toString()}`;
 };
 
 const trustedBy = [
@@ -457,9 +514,24 @@ export default function TaskFlowLanding() {
   const cardBg = dark ? "#1a3632" : "#ffffff";
   const border = dark ? "rgba(76,154,141,.2)" : "rgba(76,154,141,.15)";
   const subText = dark ? "#9ca3af" : "rgba(13,27,25,.6)";
-  const paymentStatus =
-    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("payment") ?? "" : "";
+  const queryParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const paymentStatus = queryParams?.get("payment") ?? queryParams?.get("status") ?? "";
+  const paymentPlanFromQuery = queryParams?.get("plan") ?? "";
+  const paymentSlugFromQuery = queryParams?.get("slug") ?? "";
   const isCheckoutLoading = loadingPlanName !== null;
+
+  useEffect(() => {
+    if (paymentStatus !== "success") {
+      return;
+    }
+
+    const pending = readPendingPlanSelection();
+    const resolvedPlan = paymentPlanFromQuery || pending?.planName || "";
+    const resolvedSlug = paymentSlugFromQuery || pending?.planSlug || (resolvedPlan ? getPlanSlug(resolvedPlan) : "");
+
+    clearPendingPlanSelection();
+    window.location.replace(buildCompanyCreateUrl(resolvedPlan, resolvedSlug));
+  }, [paymentStatus, paymentPlanFromQuery, paymentSlugFromQuery]);
 
   const handlePlanSelect = (plan: PricingPlanCard) => {
     if (isCheckoutLoading) {
@@ -487,6 +559,7 @@ export default function TaskFlowLanding() {
       return;
     }
 
+    savePendingPlanSelection(plan.name, planSlug);
     window.location.assign(paymentLink);
   };
 

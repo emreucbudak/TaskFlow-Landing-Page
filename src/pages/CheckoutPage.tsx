@@ -1,4 +1,4 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 
 type CheckoutQuery = {
   plan: string;
@@ -16,13 +16,20 @@ const readQuery = (): CheckoutQuery => {
     price: params.get("price") ?? "",
     period: params.get("period") ?? "",
     slug: params.get("slug") ?? "",
-    status: params.get("status") ?? "",
+    status: params.get("status") ?? params.get("payment") ?? "",
   };
 };
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
 
 const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
+const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
+
+type PendingPlanSelection = {
+  planName: string;
+  planSlug: string;
+  createdAt: number;
+};
 
 const normalizePlanText = (value: string) =>
   value
@@ -54,6 +61,56 @@ const getStripePaymentLink = (planSlug: string): string => {
   return normalizeBaseUrl(staticMap[planSlug] ?? dynamicValue ?? "");
 };
 
+const savePendingPlanSelection = (planName: string, planSlug: string) => {
+  if (typeof window === "undefined") return;
+  const payload: PendingPlanSelection = {
+    planName,
+    planSlug,
+    createdAt: Date.now(),
+  };
+  try {
+    window.localStorage.setItem(pendingPlanStorageKey, JSON.stringify(payload));
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const readPendingPlanSelection = (): PendingPlanSelection | null => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(pendingPlanStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingPlanSelection>;
+    if (typeof parsed.planName !== "string" || typeof parsed.planSlug !== "string") {
+      return null;
+    }
+    return {
+      planName: parsed.planName,
+      planSlug: parsed.planSlug,
+      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : 0,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const clearPendingPlanSelection = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(pendingPlanStorageKey);
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const buildCompanyCreateUrl = (planName: string, planSlug: string) => {
+  const params = new URLSearchParams();
+  params.set("payment", "success");
+  if (planName) params.set("plan", planName);
+  if (planSlug) params.set("slug", planSlug);
+  return `/company/create?${params.toString()}`;
+};
+
 const pageStyle: CSSProperties = {
   minHeight: "100vh",
   display: "grid",
@@ -80,13 +137,29 @@ export default function CheckoutPage() {
   const displayPrice = `${price}${period}`;
 
   const statusMessage = useMemo(() => {
+    if (status === "success") {
+      return "Odeme basarili. Sirket olusturma adimina yonlendiriliyorsun.";
+    }
     if (status === "cancel") {
       return "Odeme iptal edildi. Istedigin zaman tekrar deneyebilirsin.";
     }
     return "";
   }, [status]);
 
-  const handleStripeCheckout = async () => {
+  useEffect(() => {
+    if (status !== "success") {
+      return;
+    }
+
+    const pending = readPendingPlanSelection();
+    const resolvedPlan = (plan && plan !== "Secili Plan" ? plan : "") || pending?.planName || "";
+    const resolvedSlug = slug || pending?.planSlug || (resolvedPlan ? getPlanSlug(resolvedPlan) : "");
+
+    clearPendingPlanSelection();
+    window.location.replace(buildCompanyCreateUrl(resolvedPlan, resolvedSlug));
+  }, [status, plan, slug]);
+
+  const handleStripeCheckout = () => {
     if (isLoading) return;
 
     setIsLoading(true);
@@ -100,6 +173,7 @@ export default function CheckoutPage() {
       return;
     }
 
+    savePendingPlanSelection(plan, planSlug);
     window.location.href = paymentLink;
   };
 
