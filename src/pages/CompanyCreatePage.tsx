@@ -31,15 +31,19 @@ const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl =
     (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
   return [
+    "",
     envBaseUrl,
+    "http://localhost:8080",
     "http://localhost:5172",
     "https://localhost:7243",
-    "http://localhost:8080",
     "https://localhost:8081",
   ]
     .map((url) => normalizeBaseUrl(url))
-    .filter((url, index, arr) => Boolean(url) && arr.indexOf(url) === index);
+    .filter((url, index, arr) => arr.indexOf(url) === index);
 };
+
+const buildApiUrl = (baseUrl: string, endpointPath: string) =>
+  baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
 
 const parsePayload = <T extends object>(raw: string): T => {
   try {
@@ -90,10 +94,15 @@ export default function CompanyCreatePage() {
 
     let lastError = "Şirket oluşturulamadı.";
 
+    let hasAnyNetworkError = false;
+    const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
+    const registerPath = "/api/Identity/RegisterCommandRequest";
+
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
+        const createCompanyUrl = buildApiUrl(apiBaseUrl, createCompanyPath);
         const createResponse = await fetch(
-          `${apiBaseUrl}/api/Identity/CreateCompanyCommandRequest`,
+          createCompanyUrl,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -116,8 +125,9 @@ export default function CompanyCreatePage() {
           continue;
         }
 
+        const registerUrl = buildApiUrl(apiBaseUrl, registerPath);
         const registerResponse = await fetch(
-          `${apiBaseUrl}/api/Identity/RegisterCommandRequest`,
+          registerUrl,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -153,11 +163,22 @@ export default function CompanyCreatePage() {
         setTimeout(() => { window.location.href = "/"; }, 1200);
         return;
       } catch (error) {
+        hasAnyNetworkError = true;
         if (error instanceof Error && error.message) {
           lastError = `Bağlantı hatası: ${error.message}`;
+        } else {
+          lastError = "Baglanti hatasi: API'ye erisilemedi.";
         }
         continue;
       }
+    }
+
+    if (hasAnyNetworkError && /failed to fetch/i.test(lastError)) {
+      setErrorMessage(
+        "Baglanti hatasi: API'ye ulasilamadi. TaskFlowAPI servisini calistirip VITE_TASKFLOW_API_URL degerini kontrol et."
+      );
+      setIsLoading(false);
+      return;
     }
 
     setErrorMessage(lastError);
