@@ -1,4 +1,4 @@
-﻿import { useState, type CSSProperties } from "react";
+﻿import { useEffect, useState, type CSSProperties } from "react";
 
 const features = [
   {
@@ -18,33 +18,243 @@ const features = [
   },
 ];
 
-const pricingPlans = [
+type ApiPlanProperties = {
+  peopleAddedLimit: number;
+  teamLimit: number;
+  individualTaskLimit: number;
+  isInternalReportingEnabled: boolean;
+};
+
+type ApiCompanyPlan = {
+  planName: string;
+  planPrice: number;
+  planProperties: ApiPlanProperties;
+};
+
+type PricingPlanCard = {
+  name: string;
+  amount: number;
+  price: string;
+  period?: string;
+  description: string;
+  features: string[];
+  cta: string;
+  popular: boolean;
+};
+
+const fallbackPricingPlans: PricingPlanCard[] = [
   {
-    name: "Başlangıç",
-    price: "Ücretsiz",
+    name: "Start-up",
+    amount: 500,
+    price: "₺500",
+    period: "/ay",
     description: "Yeni başlayan küçük ekipler için ideal.",
-    features: ["5 kullanıcıya kadar", "2GB Storage", "Temel Destek", "Topluluk Erişimi"],
-    cta: "Hemen Başla",
+    features: ["5 kullanıcıya kadar", "1 takım limiti", "100 bireysel görev limiti", "İç raporlama dahil"],
+    cta: "Plan Seç",
     popular: false,
   },
   {
-    name: "Profesyonel",
-    price: "$29",
+    name: "Business",
+    amount: 1000,
+    price: "₺1.000",
     period: "/ay",
     description: "Daha fazla güce ihtiyaç duyan büyüyen ekipler için.",
-    features: ["20 kullanıcıya kadar", "50GB Depolama", "Öncelikli Destek", "Gelişmiş Analitik"],
-    cta: "Try Profesyonel",
+    features: ["25 kullanıcıya kadar", "5 takım limiti", "1000 bireysel görev limiti", "İç raporlama dahil"],
+    cta: "Plan Seç",
     popular: true,
   },
   {
-    name: "Kurumsal",
-    price: "Özel",
+    name: "Enterprise",
+    amount: 1500,
+    price: "₺1.500",
+    period: "/ay",
     description: "Büyük kuruluşlar için özelleştirilmiş çözümler.",
-    features: ["Sınırsız kullanıcı", "Sınırsız Depolama", "7/24 Özel Destek", "SSO ve Gelişmiş Güvenlik"],
-    cta: "Satış ile Görüş",
+    features: ["1000 kullanıcıya kadar", "50 takım limiti", "10000 bireysel görev limiti", "İç raporlama dahil"],
+    cta: "Plan Seç",
     popular: false,
   },
 ];
+
+const planDescriptions = [
+  "Yeni başlayan küçük ekipler için ideal.",
+  "Büyüyen ekipler için dengeli kapsam ve esneklik.",
+  "Yüksek ölçekli şirketler için kapsamlı kurumsal çözüm.",
+];
+
+const formatPlanPrice = (price: number) =>
+  new Intl.NumberFormat("tr-TR", {
+    style: "currency",
+    currency: "TRY",
+    maximumFractionDigits: 0,
+  }).format(price);
+
+const toPricingPlan = (plan: ApiCompanyPlan, index: number): PricingPlanCard => ({
+  name: plan.planName,
+  amount: plan.planPrice,
+  price: plan.planPrice <= 0 ? "Ücretsiz" : formatPlanPrice(plan.planPrice),
+  period: plan.planPrice <= 0 ? undefined : "/ay",
+  description: planDescriptions[Math.min(index, planDescriptions.length - 1)],
+  features: [
+    `${plan.planProperties.peopleAddedLimit} kullanıcıya kadar`,
+    `${plan.planProperties.teamLimit} takım limiti`,
+    `${plan.planProperties.individualTaskLimit} bireysel görev limiti`,
+    plan.planProperties.isInternalReportingEnabled ? "İç raporlama dahil" : "İç raporlama yok",
+  ],
+  cta: "Plan Seç",
+  popular: false,
+});
+
+const toRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+const getNumberByAliases = (obj: Record<string, unknown>, aliases: string[]): number => {
+  for (const key of aliases) {
+    const numericValue = Number(obj[key]);
+    if (!Number.isNaN(numericValue)) {
+      return numericValue;
+    }
+  }
+  return Number.NaN;
+};
+
+const getBooleanByAliases = (obj: Record<string, unknown>, aliases: string[]): boolean => {
+  for (const key of aliases) {
+    const rawValue = obj[key];
+    if (typeof rawValue === "boolean") {
+      return rawValue;
+    }
+    if (typeof rawValue === "string") {
+      const normalized = rawValue.trim().toLowerCase();
+      if (normalized === "true") return true;
+      if (normalized === "false") return false;
+    }
+    if (typeof rawValue === "number") {
+      return rawValue !== 0;
+    }
+  }
+  return false;
+};
+
+const parseApiPlans = (payload: unknown): ApiCompanyPlan[] => {
+  const payloadRecord = toRecord(payload);
+  const dataRecord = toRecord(payloadRecord.data);
+  const itemsRecord = toRecord(payloadRecord.items);
+  const resultRecord = toRecord(payloadRecord.result);
+  const valueRecord = toRecord(payloadRecord.value);
+  const rawArray =
+    Array.isArray(payload) ? payload :
+      Array.isArray(payloadRecord.$values) ? payloadRecord.$values :
+      Array.isArray(payloadRecord.data) ? payloadRecord.data :
+        Array.isArray(dataRecord.$values) ? dataRecord.$values :
+        Array.isArray(payloadRecord.items) ? payloadRecord.items :
+          Array.isArray(itemsRecord.$values) ? itemsRecord.$values :
+          Array.isArray(payloadRecord.result) ? payloadRecord.result :
+            Array.isArray(resultRecord.$values) ? resultRecord.$values :
+            Array.isArray(payloadRecord.value) ? payloadRecord.value :
+              Array.isArray(valueRecord.$values) ? valueRecord.$values :
+              [];
+
+  return rawArray
+    .map((item) => {
+      const raw = toRecord(item);
+      const rawProperties = toRecord(raw.planProperties ?? raw.PlanProperties ?? raw.properties ?? raw.Properties);
+      const planNameValue = raw.planName ?? raw.PlanName ?? raw.name ?? raw.Name;
+      const planName = typeof planNameValue === "string" ? planNameValue : undefined;
+      const planPrice = Number(raw.planPrice ?? raw.PlanPrice ?? raw.price ?? raw.Price);
+
+      if (!planName || Number.isNaN(planPrice)) {
+        return null;
+      }
+
+      const peopleAddedLimit = getNumberByAliases(rawProperties, [
+        "peopleAddedLimit",
+        "PeopleAddedLimit",
+        "workerAddedLimit",
+        "WorkerAddedLimit",
+      ]);
+      const teamLimit = getNumberByAliases(rawProperties, ["teamLimit", "TeamLimit"]);
+      const individualTaskLimit = getNumberByAliases(rawProperties, [
+        "individualTaskLimit",
+        "IndividualTaskLimit",
+        "taskLimit",
+        "TaskLimit",
+      ]);
+      const isInternalReportingEnabled = getBooleanByAliases(rawProperties, [
+        "isInternalReportingEnabled",
+        "IsInternalReportingEnabled",
+        "isReportIncluded",
+        "IsReportIncluded",
+      ]);
+
+      if ([peopleAddedLimit, teamLimit, individualTaskLimit].some(Number.isNaN)) {
+        return null;
+      }
+
+      return {
+        planName,
+        planPrice,
+        planProperties: {
+          peopleAddedLimit,
+          teamLimit,
+          individualTaskLimit,
+          isInternalReportingEnabled,
+        },
+      };
+    })
+    .filter((plan): plan is ApiCompanyPlan => plan !== null);
+};
+
+const buildPlansUrl = (baseUrl: string) =>
+  `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
+
+const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
+
+const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
+
+const getApiBaseUrlCandidates = (): string[] => {
+  const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
+  const candidates = [
+    envBaseUrl,
+    "http://localhost:5172",
+    "https://localhost:7243",
+    "http://localhost:8080",
+    "https://localhost:8081",
+  ]
+    .map((url) => normalizeBaseUrl(url))
+    .filter((url, index, arr) => Boolean(url) && arr.indexOf(url) === index);
+
+  return candidates;
+};
+
+const normalizePlanText = (value: string) =>
+  value
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const getPlanSlug = (planName: string) => {
+  const normalized = normalizePlanText(planName);
+  if (/(start|startup|baslangic)/.test(normalized)) return "startup";
+  if (/(business|profesyonel)/.test(normalized)) return "business";
+  if (/(enterprise|kurumsal)/.test(normalized)) return "enterprise";
+  return normalized.replace(/\s+/g, "-");
+};
+
+const getStripePaymentLink = (planSlug: string): string => {
+  const env = import.meta.env as Record<string, string | undefined>;
+  const staticMap: Record<string, string | undefined> = {
+    startup: env.VITE_STRIPE_PAYMENT_LINK_STARTUP,
+    business: env.VITE_STRIPE_PAYMENT_LINK_BUSINESS,
+    enterprise: env.VITE_STRIPE_PAYMENT_LINK_ENTERPRISE,
+  };
+
+  const dynamicKey = `VITE_STRIPE_PAYMENT_LINK_${planSlug.replace(/[^a-z0-9]/gi, "_").toUpperCase()}`;
+  const dynamicValue = env[dynamicKey];
+
+  return (staticMap[planSlug] ?? dynamicValue ?? "").trim();
+};
 
 const trustedBy = [
   { icon: "change_history", name: "ACME Corp" },
@@ -188,12 +398,97 @@ const PhoneMockup = () => (
 
 export default function TaskFlowLanding() {
   const [dark, setDark] = useState(false);
+  const [pricingPlans, setPricingPlans] = useState<PricingPlanCard[]>(fallbackPricingPlans);
+  const [loadingPlanName, setLoadingPlanName] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState("");
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchCompanyPlans = async () => {
+      try {
+        const apiBaseUrls = getApiBaseUrlCandidates();
+        for (const apiBaseUrl of apiBaseUrls) {
+          try {
+            const response = await fetch(buildPlansUrl(apiBaseUrl), { cache: "no-store" });
+
+            if (!response.ok) {
+              continue;
+            }
+
+            const payload: unknown = await response.json();
+            const apiPlans = parseApiPlans(payload)
+              .sort((a, b) => a.planPrice - b.planPrice)
+              .slice(0, 3);
+
+            if (apiPlans.length === 0) {
+              continue;
+            }
+
+            const planCards = apiPlans.map((plan, index) => toPricingPlan(plan, index));
+            const mergedPlans = fallbackPricingPlans.map((fallbackPlan, index) => planCards[index] ?? fallbackPlan);
+            const plansWithPopular = mergedPlans.map((plan, index) => ({
+              ...plan,
+              popular: index === 1,
+            }));
+
+            if (isMounted) {
+              setPricingPlans(plansWithPopular);
+            }
+            return;
+          } catch {
+            continue;
+          }
+        }
+      } catch (error) {
+        console.error("Şirket planları alınırken hata oluştu:", error);
+      }
+    };
+
+    void fetchCompanyPlans();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const bg = dark ? "#10221f" : "#f8fcfb";
   const text = dark ? "#f3f4f6" : "#0d1b19";
   const cardBg = dark ? "#1a3632" : "#ffffff";
   const border = dark ? "rgba(76,154,141,.2)" : "rgba(76,154,141,.15)";
   const subText = dark ? "#9ca3af" : "rgba(13,27,25,.6)";
+  const paymentStatus =
+    typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("payment") ?? "" : "";
+  const isCheckoutLoading = loadingPlanName !== null;
+
+  const handlePlanSelect = (plan: PricingPlanCard) => {
+    if (isCheckoutLoading) {
+      return;
+    }
+
+    const planSlug = getPlanSlug(plan.name);
+
+    if (plan.amount <= 0) {
+      const params = new URLSearchParams();
+      params.set("payment", "success");
+      params.set("plan", plan.name);
+      params.set("slug", planSlug);
+      window.location.assign(`/company/create?${params.toString()}`);
+      return;
+    }
+
+    setLoadingPlanName(plan.name);
+    setCheckoutError("");
+    const paymentLink = getStripePaymentLink(planSlug);
+
+    if (!isHttpUrl(paymentLink)) {
+      setCheckoutError(`"${plan.name}" plani icin Stripe Payment Link tanimli degil.`);
+      setLoadingPlanName(null);
+      return;
+    }
+
+    window.location.assign(paymentLink);
+  };
 
   return (
     <>
@@ -340,6 +635,16 @@ export default function TaskFlowLanding() {
             <div style={{ textAlign: "center", marginBottom: "48px" }}>
               <h2 style={{ fontSize: "clamp(1.6rem,3vw,2.2rem)", fontWeight: 900, margin: "0 0 12px" }}>Fiyat Planları</h2>
               <p style={{ color: subText }}>Ekibinizin büyüklüğüne ve ihtiyaçlarına en uygun planı seçin.</p>
+              {paymentStatus === "cancel" && !checkoutError && (
+                <p style={{ margin: "14px 0 0", color: "#92400e", fontSize: "13px" }}>
+                  Odeme islemi iptal edildi. Dilersen plan secip tekrar deneyebilirsin.
+                </p>
+              )}
+              {checkoutError && (
+                <p style={{ margin: "14px 0 0", color: "#b91c1c", fontSize: "13px" }}>
+                  {checkoutError}
+                </p>
+              )}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(260px,1fr))", gap: "24px", maxWidth: "960px", margin: "0 auto" }}>
               {pricingPlans.map((plan) => (
@@ -377,13 +682,18 @@ export default function TaskFlowLanding() {
                   </div>
                   <button style={{
                     width: "100%", padding: "12px", borderRadius: "12px", fontWeight: 700,
-                    fontSize: "15px", cursor: "pointer",
+                    fontSize: "15px", cursor: isCheckoutLoading ? "not-allowed" : "pointer",
                     background: plan.popular ? "#13ecc8" : "transparent",
                     color: plan.popular ? "#0d1b19" : text,
                     border: plan.popular ? "none" : `1px solid rgba(76,154,141,.3)`,
                     boxShadow: plan.popular ? "0 4px 16px rgba(19,236,200,.25)" : "none",
-                  }}>
-                    {plan.cta}
+                    opacity: isCheckoutLoading && loadingPlanName !== plan.name ? 0.6 : 1,
+                  }}
+                    type="button"
+                    disabled={isCheckoutLoading}
+                    onClick={() => handlePlanSelect(plan)}
+                  >
+                    {loadingPlanName === plan.name ? "Yonlendiriliyor..." : plan.cta}
                   </button>
                 </div>
               ))}
@@ -435,4 +745,5 @@ export default function TaskFlowLanding() {
     </>
   );
 }
+
 
