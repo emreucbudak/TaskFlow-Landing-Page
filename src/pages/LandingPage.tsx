@@ -459,6 +459,11 @@ export default function TaskFlowLanding() {
   const [loadingPlanName, setLoadingPlanName] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
 
+  const scrollToSection = (sectionId: string) => {
+    const section = document.getElementById(sectionId);
+    section?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   useEffect(() => {
     let isMounted = true;
 
@@ -624,14 +629,20 @@ export default function TaskFlowLanding() {
                   padding: "0 24px", height: "48px", borderRadius: "12px", border: "none",
                   background: "#13ecc8", color: "#0d1b19", fontWeight: 700, fontSize: "15px",
                   cursor: "pointer", boxShadow: "0 4px 20px rgba(19,236,200,.3)",
-                }}>
+                }}
+                  type="button"
+                  onClick={() => scrollToSection("pricing")}
+                >
                   TaskFlow'u Alın
                 </button>
                 <button style={{
                   padding: "0 24px", height: "48px", borderRadius: "12px",
                   background: cardBg, border: `1px solid ${border}`,
                   color: text, fontWeight: 700, fontSize: "15px", cursor: "pointer",
-                }}>
+                }}
+                  type="button"
+                  onClick={() => scrollToSection("features")}
+                >
                   Daha Fazla Bilgi
                 </button>
               </div>
@@ -667,7 +678,7 @@ export default function TaskFlowLanding() {
           </section>
 
           {/* FEATURES */}
-          <section style={{ padding: "80px 16px" }}>
+          <section id="features" style={{ padding: "80px 16px" }}>
             <div style={{ textAlign: "center", marginBottom: "48px" }}>
               <h2 style={{ fontSize: "clamp(1.6rem,3vw,2.2rem)", fontWeight: 900, margin: "0 0 12px" }}>
                 Başarı için ihtiyacınız olan{" "}
@@ -704,7 +715,7 @@ export default function TaskFlowLanding() {
           </section>
 
           {/* PRICING */}
-          <section style={{ padding: "80px 16px", borderTop: `1px solid ${border}`, background: dark ? "rgba(26,54,50,.1)" : "rgba(255,255,255,.5)" }}>
+          <section id="pricing" style={{ padding: "80px 16px", borderTop: `1px solid ${border}`, background: dark ? "rgba(26,54,50,.1)" : "rgba(255,255,255,.5)" }}>
             <div style={{ textAlign: "center", marginBottom: "48px" }}>
               <h2 style={{ fontSize: "clamp(1.6rem,3vw,2.2rem)", fontWeight: 900, margin: "0 0 12px" }}>Fiyat Planları</h2>
               <p style={{ color: subText }}>Ekibinizin büyüklüğüne ve ihtiyaçlarına en uygun planı seçin.</p>
