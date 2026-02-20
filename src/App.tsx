@@ -1,27 +1,19 @@
+import { Navigate, Route, Routes } from 'react-router-dom'
 import TaskFlowLanding from './pages/LandingPage'
 import CheckoutPage from './pages/CheckoutPage'
 import CompanyCreatePage from './pages/CompanyCreatePage'
-import RegisterPage from './features/auth/register/RegisterPage'
+import LoginPage from './pages/LoginPage'
 
 function App() {
-  const pathname =
-    typeof window !== "undefined"
-      ? (window.location.pathname.replace(/\/+$/, "") || "/")
-      : "/";
-
-  if (pathname === "/checkout") {
-    return <CheckoutPage />;
-  }
-
-  if (pathname === "/company/create") {
-    return <CompanyCreatePage />;
-  }
-
-  if (pathname === "/auth/register") {
-    return <RegisterPage />;
-  }
-
-  return <TaskFlowLanding />
+  return (
+    <Routes>
+      <Route path="/" element={<TaskFlowLanding />} />
+      <Route path="/checkout" element={<CheckoutPage />} />
+      <Route path="/company/create" element={<CompanyCreatePage />} />
+      <Route path="/auth/login" element={<LoginPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
 }
 
 export default App

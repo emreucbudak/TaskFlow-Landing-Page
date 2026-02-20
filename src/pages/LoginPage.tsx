@@ -1,21 +1,13 @@
-import { useMemo, useState, type CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
-type RegisterResponse = {
+type LoginResponse = {
+  accessToken?: string;
+  refreshToken?: string;
+  AccessToken?: string;
+  RefreshToken?: string;
   message?: string;
   detail?: string;
   errors?: Record<string, string[]>;
-};
-
-const guidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-const readQuery = () => {
-  const search = typeof window !== "undefined" ? window.location.search : "";
-  const params = new URLSearchParams(search);
-  return {
-    companyId: params.get("companyId") ?? "",
-    companyName: params.get("companyName") ?? "",
-    plan: params.get("plan") ?? "",
-  };
 };
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
@@ -38,7 +30,7 @@ const pageStyle: CSSProperties = {
 
 const cardStyle: CSSProperties = {
   width: "100%",
-  maxWidth: "560px",
+  maxWidth: "520px",
   background: "#ffffff",
   borderRadius: "20px",
   border: "1px solid rgba(76,154,141,.2)",
@@ -46,31 +38,32 @@ const cardStyle: CSSProperties = {
   padding: "28px",
 };
 
-export default function RegisterPage() {
-  const { companyId, companyName, plan } = useMemo(() => readQuery(), []);
-  const [name, setName] = useState("");
+const inputStyle: CSSProperties = {
+  height: "44px",
+  borderRadius: "10px",
+  border: "1px solid rgba(76,154,141,.35)",
+  padding: "0 12px",
+  fontSize: "14px",
+  outline: "none",
+};
+
+const getToken = (payload: LoginResponse, type: "access" | "refresh") =>
+  type === "access"
+    ? payload.accessToken ?? payload.AccessToken ?? ""
+    : payload.refreshToken ?? payload.RefreshToken ?? "";
+
+export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
-  const isCompanyIdValid = guidRegex.test(companyId);
-
-  const handleRegister = async () => {
+  const handleLogin = async () => {
     if (isLoading) return;
 
-    if (!isCompanyIdValid) {
-      setErrorMessage("Company ID gecersiz. Sirket olusturma adimini tekrar tamamla.");
-      return;
-    }
-    if (!name.trim() || !email.trim() || !password) {
-      setErrorMessage("Tum alanlari doldur.");
-      return;
-    }
-    if (password !== confirmPassword) {
-      setErrorMessage("Sifreler ayni degil.");
+    if (!email.trim() || !password) {
+      setErrorMessage("E-posta ve sifre zorunlu.");
       return;
     }
 
@@ -78,27 +71,24 @@ export default function RegisterPage() {
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "RegisterCommandRequest calistirilamadi.";
+    let lastError = "LoginCommandRequest calistirilamadi.";
 
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
-        const response = await fetch(`${apiBaseUrl}/api/Identity/RegisterCommandRequest`, {
+        const response = await fetch(`${apiBaseUrl}/api/Identity/LoginCommandRequest`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            name: name.trim(),
             email: email.trim(),
             password,
-            companyId,
-            role: "Company",
           }),
         });
 
-        let payload: RegisterResponse = {};
+        let payload: LoginResponse = {};
         try {
-          payload = (await response.json()) as RegisterResponse;
+          payload = (await response.json()) as LoginResponse;
         } catch {
           payload = {};
         }
@@ -109,10 +99,20 @@ export default function RegisterPage() {
           continue;
         }
 
-        setSuccessMessage("Company rolu ile kayit basarili. Giris ekranina yonlendiriliyorsun.");
+        const accessToken = getToken(payload, "access");
+        const refreshToken = getToken(payload, "refresh");
+
+        if (!accessToken || !refreshToken) {
+          lastError = "Login basarili gorundu ancak token bilgisi donmedi.";
+          continue;
+        }
+
+        window.localStorage.setItem("taskflow_access_token", accessToken);
+        window.localStorage.setItem("taskflow_refresh_token", refreshToken);
+        setSuccessMessage("Giris basarili. Ana sayfaya yonlendiriliyorsun.");
         setTimeout(() => {
           window.location.href = "/";
-        }, 1200);
+        }, 900);
         return;
       } catch {
         continue;
@@ -129,35 +129,29 @@ export default function RegisterPage() {
       <div style={pageStyle}>
         <div style={cardStyle}>
           <p style={{ margin: 0, color: "#4c9a8d", fontWeight: 700, fontSize: "13px", letterSpacing: ".08em" }}>
-            FEATURES / AUTH / REGISTER
+            FEATURES / AUTH / LOGIN
           </p>
           <h1 style={{ margin: "10px 0 8px", color: "#0d1b19", fontSize: "clamp(1.5rem,3vw,2rem)", lineHeight: 1.2 }}>
-            Register (Company)
+            Giris Yap
           </h1>
           <p style={{ margin: 0, color: "rgba(13,27,25,.65)" }}>
-            RegisterCommandRequest role alanina otomatik olarak <strong>Company</strong> gonderilir.
+            Bilgilerini gir. Istek <strong>/api/Identity/LoginCommandRequest</strong> endpointine gonderilir.
           </p>
 
-          <div style={{ marginTop: "16px", padding: "10px 12px", borderRadius: "10px", background: "#f6fbfa", border: "1px solid rgba(76,154,141,.2)", fontSize: "13px" }}>
-            <div><strong>Company:</strong> {companyName || "-"}</div>
-            <div><strong>CompanyId:</strong> {companyId || "-"}</div>
-            <div><strong>Plan:</strong> {plan || "-"}</div>
-          </div>
-
-          <div style={{ marginTop: "20px", display: "grid", gap: "10px" }}>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Ad Soyad"
-              style={inputStyle}
-            />
+          <form
+            style={{ marginTop: "20px", display: "grid", gap: "10px" }}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleLogin();
+            }}
+          >
             <input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="E-posta"
               style={inputStyle}
+              autoComplete="email"
             />
             <input
               type="password"
@@ -165,22 +159,14 @@ export default function RegisterPage() {
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Sifre"
               style={inputStyle}
+              autoComplete="current-password"
             />
-            <input
-              type="password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              placeholder="Sifre Tekrar"
-              style={inputStyle}
-            />
-          </div>
 
-          <div style={{ marginTop: "20px", display: "grid", gap: "10px" }}>
             <button
-              type="button"
-              onClick={handleRegister}
+              type="submit"
               disabled={isLoading}
               style={{
+                marginTop: "8px",
                 height: "48px",
                 borderRadius: "12px",
                 border: "none",
@@ -191,9 +177,9 @@ export default function RegisterPage() {
                 color: "#0d1b19",
               }}
             >
-              {isLoading ? "Kayit Olusturuluyor..." : "RegisterCommandRequest Calistir"}
+              {isLoading ? "Giris Yapiliyor..." : "Giris Yap"}
             </button>
-          </div>
+          </form>
 
           {errorMessage && (
             <p style={{ margin: "16px 0 0", fontSize: "13px", color: "#b91c1c" }}>
@@ -210,12 +196,3 @@ export default function RegisterPage() {
     </>
   );
 }
-
-const inputStyle: CSSProperties = {
-  height: "44px",
-  borderRadius: "10px",
-  border: "1px solid rgba(76,154,141,.35)",
-  padding: "0 12px",
-  fontSize: "14px",
-  outline: "none",
-};
