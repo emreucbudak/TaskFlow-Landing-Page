@@ -69,6 +69,23 @@ const extractApiError = (
   );
 };
 
+const getPasswordPolicyErrors = (passwordValue: string): string[] => {
+  const errors: string[] = [];
+  if (passwordValue.length < 8) {
+    errors.push("en az 8 karakter");
+  }
+  if (!/[A-Z]/.test(passwordValue)) {
+    errors.push("en az 1 büyük harf");
+  }
+  if (!/[a-z]/.test(passwordValue)) {
+    errors.push("en az 1 küçük harf");
+  }
+  if (!/[0-9]/.test(passwordValue)) {
+    errors.push("en az 1 rakam");
+  }
+  return errors;
+};
+
 type IconProps = { name: string; style?: CSSProperties };
 const Icon = ({ name, style }: IconProps) => (
   <span style={{ fontFamily: "'Material Symbols Outlined'", ...style }}>{name}</span>
@@ -126,6 +143,11 @@ export default function CompanyCreatePage() {
     if (!companyName.trim()) { setErrorMessage("Şirket ismi boş olamaz."); return; }
     if (!adminName.trim() || !adminEmail.trim() || !password) { setErrorMessage("Yönetici bilgilerini eksiksiz doldur."); return; }
     if (password !== confirmPassword) { setErrorMessage("Şifreler aynı değil."); return; }
+    const passwordPolicyErrors = getPasswordPolicyErrors(password);
+    if (passwordPolicyErrors.length > 0) {
+      setErrorMessage(`Şifre kuralları sağlanmıyor: ${passwordPolicyErrors.join(", ")}.`);
+      return;
+    }
 
     setIsLoading(true);
     setErrorMessage("");
@@ -176,7 +198,10 @@ export default function CompanyCreatePage() {
         const registerPayload = parsePayload<ApiErrorPayload>(registerRaw);
 
         if (!registerResponse.ok) {
-          const registerError = extractApiError(registerPayload, registerRaw, "Yönetici hesabı oluşturulamadı.");
+          let registerError = extractApiError(registerPayload, registerRaw, "Yönetici hesabı oluşturulamadı.");
+          if (/Kayıt işlemi başarısız oldu/i.test(registerError)) {
+            registerError = "Şifre kuralları sağlanmıyor olabilir (en az 8 karakter, büyük harf, küçük harf ve rakam).";
+          }
           setErrorMessage(`Şirket oluşturuldu fakat yönetici oluşturulamadı: ${registerError}`);
           setIsLoading(false);
           return;
