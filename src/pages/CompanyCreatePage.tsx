@@ -69,6 +69,31 @@ const extractApiError = (
   );
 };
 
+const toFriendlyCompanyCreateError = (rawError: string): string => {
+  const normalized = rawError.trim().toLocaleLowerCase("tr-TR");
+
+  if (!normalized) {
+    return "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+  }
+  if (normalized.includes("failed to fetch") || normalized.includes("network error")) {
+    return "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+  }
+  if (normalized.includes("emaili zaten kullanılıyor")) {
+    return "Bu e-posta adresi zaten kullanımda.";
+  }
+  if (normalized.includes("kayıt işlemi başarısız oldu")) {
+    return "Yönetici hesabı oluşturulamadı. Lütfen girdiğiniz bilgileri kontrol edip tekrar deneyin.";
+  }
+  if (normalized.includes("one or more validation errors occurred")) {
+    return "Gönderilen bilgilerde eksik veya hatalı alanlar var.";
+  }
+  if (normalized.includes("şifre")) {
+    return rawError;
+  }
+
+  return "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+};
+
 const getPasswordPolicyErrors = (passwordValue: string): string[] => {
   const errors: string[] = [];
   if (passwordValue.length < 8) {
@@ -140,9 +165,9 @@ export default function CompanyCreatePage() {
 
   const handleCreate = async () => {
     if (isLoading) return;
-    if (!companyName.trim()) { setErrorMessage("Şirket ismi boş olamaz."); return; }
-    if (!adminName.trim() || !adminEmail.trim() || !password) { setErrorMessage("Yönetici bilgilerini eksiksiz doldur."); return; }
-    if (password !== confirmPassword) { setErrorMessage("Şifreler aynı değil."); return; }
+    if (!companyName.trim()) { setErrorMessage("Lütfen şirket adını girin."); return; }
+    if (!adminName.trim() || !adminEmail.trim() || !password) { setErrorMessage("Lütfen yönetici bilgilerini eksiksiz doldurun."); return; }
+    if (password !== confirmPassword) { setErrorMessage("Şifreler eşleşmiyor."); return; }
     const passwordPolicyErrors = getPasswordPolicyErrors(password);
     if (passwordPolicyErrors.length > 0) {
       setErrorMessage(`Şifre kuralları sağlanmıyor: ${passwordPolicyErrors.join(", ")}.`);
@@ -153,7 +178,7 @@ export default function CompanyCreatePage() {
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "Şirket oluşturulamadı.";
+    let lastError = "İşlem sırasında bir hata oluştu.";
     let hasAnyNetworkError = false;
     const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
     const registerPath = "/api/Identity/RegisterCommandRequest";
@@ -171,13 +196,14 @@ export default function CompanyCreatePage() {
         const createPayload = parsePayload<CreateCompanyResponse>(createRaw);
 
         if (!createResponse.ok) {
-          lastError = extractApiError(createPayload, createRaw, lastError);
+          const createError = extractApiError(createPayload, createRaw, lastError);
+          lastError = toFriendlyCompanyCreateError(createError);
           continue;
         }
 
         const createdCompanyId = createPayload.companyId ?? createPayload.CompanyId ?? "";
         if (!guidRegex.test(createdCompanyId)) {
-          lastError = "Şirket oluşturuldu fakat companyId dönmedi.";
+          lastError = "Şirket oluşturuldu ancak işlem tamamlanamadı. Lütfen tekrar deneyin.";
           continue;
         }
 
@@ -202,7 +228,7 @@ export default function CompanyCreatePage() {
           if (/Kayıt işlemi başarısız oldu/i.test(registerError)) {
             registerError = "Şifre kuralları sağlanmıyor olabilir (en az 8 karakter, büyük harf, küçük harf ve rakam).";
           }
-          setErrorMessage(`Şirket oluşturuldu fakat yönetici oluşturulamadı: ${registerError}`);
+          setErrorMessage(`Şirket oluşturuldu ancak yönetici hesabı açılamadı: ${toFriendlyCompanyCreateError(registerError)}`);
           setIsLoading(false);
           return;
         }
@@ -213,21 +239,21 @@ export default function CompanyCreatePage() {
       } catch (error) {
         hasAnyNetworkError = true;
         if (error instanceof Error && error.message) {
-          lastError = `Bağlantı hatası: ${error.message}`;
+          lastError = toFriendlyCompanyCreateError(error.message);
         } else {
-          lastError = "Bağlantı hatası: API'ye erişilemedi.";
+          lastError = "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
         }
         continue;
       }
     }
 
-    if (hasAnyNetworkError && /failed to fetch/i.test(lastError)) {
-      setErrorMessage("Bağlantı hatası: API'ye ulaşılamadı. TaskFlowAPI servisini çalıştırıp VITE_TASKFLOW_API_URL değerini kontrol et.");
+    if (hasAnyNetworkError) {
+      setErrorMessage("Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.");
       setIsLoading(false);
       return;
     }
 
-    setErrorMessage(lastError);
+    setErrorMessage(toFriendlyCompanyCreateError(lastError));
     setIsLoading(false);
   };
 

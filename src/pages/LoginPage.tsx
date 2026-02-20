@@ -7,6 +7,7 @@ type LoginResponse = {
   RefreshToken?: string;
   message?: string;
   detail?: string;
+  title?: string;
   errors?: Record<string, string[]>;
 };
 
@@ -23,6 +24,32 @@ const getToken = (payload: LoginResponse, type: "access" | "refresh") =>
   type === "access"
     ? payload.accessToken ?? payload.AccessToken ?? ""
     : payload.refreshToken ?? payload.RefreshToken ?? "";
+
+const toFriendlyLoginError = (rawError: string): string => {
+  const normalized = rawError.trim().toLocaleLowerCase("tr-TR");
+
+  if (!normalized) {
+    return "Giriş sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+  }
+  if (normalized.includes("şifre yanlış") || normalized.includes("wrong password")) {
+    return "E-posta veya şifre hatalı.";
+  }
+  if (normalized.includes("kullanıcı bulunamadı") || normalized.includes("user not found")) {
+    return "Bu e-posta ile kayıtlı bir hesap bulunamadı.";
+  }
+  if (normalized.includes("authentication error") || normalized.includes("unauthorized")) {
+    return "Giriş yapılamadı. Bilgilerinizi kontrol edip tekrar deneyin.";
+  }
+  if (
+    normalized.includes("failed to fetch") ||
+    normalized.includes("network error") ||
+    normalized.includes("api'ye erisilemedi")
+  ) {
+    return "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+  }
+
+  return "Giriş sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+};
 
 type IconProps = { name: string; style?: CSSProperties };
 const Icon = ({ name, style }: IconProps) => (
@@ -74,7 +101,7 @@ export default function LoginPage() {
     if (isLoading) return;
 
     if (!email.trim() || !password) {
-      setErrorMessage("E-posta ve sifre zorunlu.");
+      setErrorMessage("E-posta ve şifre alanlarını doldurun.");
       return;
     }
 
@@ -82,7 +109,8 @@ export default function LoginPage() {
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "LoginCommandRequest calistirilamadi.";
+    let lastError = "Giriş sırasında bir hata oluştu.";
+    let hasAnyNetworkError = false;
 
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
@@ -101,7 +129,8 @@ export default function LoginPage() {
 
         if (!response.ok) {
           const firstError = payload.errors ? Object.values(payload.errors).flat()[0] : "";
-          lastError = firstError || payload.message || payload.detail || lastError;
+          const apiError = firstError || payload.message || payload.detail || payload.title || "";
+          lastError = toFriendlyLoginError(apiError);
           continue;
         }
 
@@ -109,7 +138,7 @@ export default function LoginPage() {
         const refreshToken = getToken(payload, "refresh");
 
         if (!accessToken || !refreshToken) {
-          lastError = "Login basarili gorundu ancak token bilgisi donmedi.";
+          lastError = "Giriş tamamlanamadı. Lütfen tekrar deneyin.";
           continue;
         }
 
@@ -118,12 +147,24 @@ export default function LoginPage() {
         setSuccessMessage("Giris basarili. Ana sayfaya yonlendiriliyorsun.");
         setTimeout(() => { window.location.href = "/"; }, 900);
         return;
-      } catch {
+      } catch (error) {
+        hasAnyNetworkError = true;
+        if (error instanceof Error && error.message) {
+          lastError = toFriendlyLoginError(error.message);
+        } else {
+          lastError = "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+        }
         continue;
       }
     }
 
-    setErrorMessage(lastError);
+    if (hasAnyNetworkError) {
+      setErrorMessage("Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.");
+      setIsLoading(false);
+      return;
+    }
+
+    setErrorMessage(toFriendlyLoginError(lastError));
     setIsLoading(false);
   };
 
