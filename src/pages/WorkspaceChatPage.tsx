@@ -106,15 +106,55 @@ export default function WorkspaceChatPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, padding: "24px 32px", display: "flex", flexDirection: "column", gap: 28 }}>
-          <section>
-            <div style={{ fontWeight: 700, fontSize: 24, color: "#111827", marginBottom: 12 }}>Sohbet</div>
-            <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", padding: 20 }}>
-              <p style={{ margin: 0, color: "#6B7280", lineHeight: 1.6 }}>
-                Buraya konuşmalar, kanallar ve mesaj paneli eklenebilir.
-              </p>
-            </div>
-          </section>
+        <div style={{ flex: 1, minHeight: 620, padding: "24px 32px", display: "flex" }}>
+          <div
+            style={{
+              flex: 1,
+              display: "grid",
+              gridTemplateColumns: "2fr 4fr",
+              gridTemplateRows: "1fr",
+              columnGap: 10,
+              alignItems: "stretch",
+            }}
+          >
+            <section
+              style={{
+                padding: 20,
+                height: "100%",
+                background: "#fff",
+                borderRadius: 16,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+              }}
+            >
+              <div
+                style={{
+                  background: "#F9FAFB",
+                  border: "1px solid #E5E7EB",
+                  borderRadius: 10,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "10px 12px",
+                }}
+              >
+                <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
+                  <circle cx="11" cy="11" r="8" stroke="#9CA3AF" strokeWidth="2" />
+                  <path d="M21 21l-4.35-4.35" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+                <span style={{ fontSize: 13, color: "#9CA3AF" }}>Ara...</span>
+              </div>
+            </section>
+
+            <section
+              style={{
+                padding: 20,
+                height: "100%",
+                background: "#fff",
+                borderRadius: 16,
+                boxShadow: "0 1px 4px rgba(0,0,0,0.06)",
+              }}
+            />
+          </div>
         </div>
 
         <div

@@ -106,15 +106,8 @@ export default function WorkspaceTasksPage() {
           </div>
         </div>
 
-        <div style={{ flex: 1, padding: "24px 32px", display: "flex", flexDirection: "column", gap: 28 }}>
-          <section>
-            <div style={{ fontWeight: 700, fontSize: 24, color: "#111827", marginBottom: 12 }}>Görevler</div>
-            <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", padding: 20 }}>
-              <p style={{ margin: 0, color: "#6B7280", lineHeight: 1.6 }}>
-                Buraya görev listesi, filtreler ve durum kartları eklenebilir.
-              </p>
-            </div>
-          </section>
+        <div style={{ flex: 1, minHeight: 620, padding: "24px 32px" }}>
+          <div style={{ fontWeight: 700, fontSize: 24, color: "#111827" }}>Görevler</div>
         </div>
 
         <div
