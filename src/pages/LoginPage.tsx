@@ -198,8 +198,8 @@ export default function LoginPage() {
 
         window.localStorage.setItem("taskflow_access_token", accessToken);
         window.localStorage.setItem("taskflow_refresh_token", refreshToken);
-        setSuccessMessage("Giris basarili. Ana sayfaya yonlendiriliyorsun.");
-        setTimeout(() => { window.location.href = "/"; }, 900);
+        setSuccessMessage("Giris basarili. Workspace sayfasina yonlendiriliyorsun.");
+        setTimeout(() => { window.location.href = "/workspace"; }, 900);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
