@@ -1,5 +1,7 @@
 ﻿import { useEffect, useState, type CSSProperties } from "react";
 
+import { checkoutMessages } from "../shared/errors/messages";
+
 const features = [
   {
     icon: "bar_chart",
@@ -577,7 +579,7 @@ export default function TaskFlowLanding() {
     setCheckoutError("");
     const paymentLink = getStripePaymentLink(planSlug);
     if (!isHttpUrl(paymentLink)) {
-      setCheckoutError(`"${plan.name}" planı için Stripe Payment Link tanımlı değil.`);
+      setCheckoutError(checkoutMessages.paymentLinkMissing(plan.name));
       setLoadingPlanName(null);
       return;
     }
@@ -692,7 +694,7 @@ export default function TaskFlowLanding() {
               <p style={{ color: subText }}>Ekibinizin büyüklüğüne ve ihtiyaçlarına en uygun planı seçin.</p>
               {paymentStatus === "cancel" && !checkoutError && (
                 <p style={{ margin: "14px 0 0", color: "#92400e", fontSize: "13px" }}>
-                  Ödeme işlemi iptal edildi. Dilersen plan seçip tekrar deneyebilirsin.
+                  {checkoutMessages.paymentCanceled}
                 </p>
               )}
               {checkoutError && (
@@ -783,7 +785,10 @@ export default function TaskFlowLanding() {
         <footer style={{ padding: "24px 16px", borderTop: `1px solid ${dark ? "#1f2937" : "#e5e7eb"}` }}>
           <div style={{ maxWidth: "1280px", margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 700 }}>
-              <Icon name="task_alt" style={{ color: "#4c9a8d" }} /> TaskFlow
+              <div style={{ width: "32px", height: "32px", borderRadius: "8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <img src="https://www.logoai.com/uploads/icon/2021/08/06/732ca933-7df8-43e8-b085-69466243c919.png" alt="TaskFlow logo" style={{ width: "26px", height: "26px", objectFit: "contain", display: "block" }} />
+              </div>
+              <span>TaskFlow</span>
             </div>
             <span style={{ color: "#9ca3af", fontSize: "13px" }}>© 2026 TaskFlow Inc. Tüm hakları saklıdır.</span>
           </div>

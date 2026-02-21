@@ -2,12 +2,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
-
-type ApiErrorPayload = {
-  message?: string;
-  detail?: string;
-  errors?: Record<string, string[]>;
-};
+import { extractApiError, parsePayload, type ApiErrorPayload } from "../shared/errors/api";
+import { toFriendlyCompanyCreateError } from "../shared/errors/mappers";
+import { companyCreateErrorMessages, validationMessages } from "../shared/errors/messages";
 
 type CreateCompanyResponse = {
   companyId?: string;
@@ -26,19 +23,19 @@ type ApiCompanyPlan = {
 
 const companyCreateSchema = z
   .object({
-    companyName: z.string().trim().min(1, "Lutfen sirket adini girin."),
-    adminName: z.string().trim().min(1, "Lutfen yonetici adini girin."),
-    adminEmail: z.string().trim().min(1, "E-posta zorunludur.").email("Gecerli bir e-posta girin."),
+    companyName: z.string().trim().min(1, validationMessages.requiredCompanyName),
+    adminName: z.string().trim().min(1, validationMessages.requiredAdminName),
+    adminEmail: z.string().trim().min(1, validationMessages.requiredEmail).email(validationMessages.invalidEmail),
     password: z
       .string()
-      .min(8, "Sifre en az 8 karakter olmali.")
-      .regex(/[A-Z]/, "Sifre en az 1 buyuk harf icermeli.")
-      .regex(/[a-z]/, "Sifre en az 1 kucuk harf icermeli.")
-      .regex(/[0-9]/, "Sifre en az 1 rakam icermeli."),
-    confirmPassword: z.string().min(1, "Sifre tekrari zorunludur."),
+      .min(8, validationMessages.passwordMinLength)
+      .regex(/[A-Z]/, validationMessages.passwordMustContainUppercase)
+      .regex(/[a-z]/, validationMessages.passwordMustContainLowercase)
+      .regex(/[0-9]/, validationMessages.passwordMustContainNumber),
+    confirmPassword: z.string().min(1, validationMessages.requiredPasswordConfirmation),
   })
   .refine((value) => value.password === value.confirmPassword, {
-    message: "Sifreler eslesmiyor.",
+    message: validationMessages.passwordsDoNotMatch,
     path: ["confirmPassword"],
   });
 
@@ -93,13 +90,6 @@ const clearPendingPlanSelection = () => {
 };
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
-
-const normalizeText = (value: string) =>
-  value
-    .trim()
-    .toLocaleLowerCase("tr-TR")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
 
 const normalizePlanText = (value: string) =>
   value
@@ -179,59 +169,6 @@ const formatPlanPrice = (price: number) =>
     currency: "TRY",
     maximumFractionDigits: 0,
   }).format(price);
-
-const parsePayload = <T extends object>(raw: string): T => {
-  try {
-    return raw ? (JSON.parse(raw) as T) : ({} as T);
-  } catch {
-    return {} as T;
-  }
-};
-
-const extractApiError = (
-  payload: ApiErrorPayload,
-  raw: string,
-  statusCode: number,
-  fallback: string
-): string => {
-  const validationError = payload.errors
-    ? Object.values(payload.errors).flat().find(Boolean)
-    : "";
-  return (
-    validationError ||
-    payload.message ||
-    payload.detail ||
-    (raw.trim() ? raw : "") ||
-    (statusCode === 401 ? "unauthorized" : "") ||
-    (statusCode === 404 ? "resource not found" : "") ||
-    fallback
-  );
-};
-
-const toFriendlyCompanyCreateError = (rawError: string): string => {
-  const normalized = normalizeText(rawError);
-
-  if (!normalized) {
-    return "Islem sirasinda bir hata olustu. Lutfen tekrar deneyin.";
-  }
-  if (normalized.includes("failed to fetch") || normalized.includes("network error") || normalized.includes("fetch")) {
-    return "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
-  }
-  if (normalized.includes("email") && normalized.includes("zaten") && normalized.includes("kullani")) {
-    return "Bu e-posta adresi zaten kullanimda.";
-  }
-  if (normalized.includes("kayit islemi basarisiz") || normalized.includes("register")) {
-    return "Yonetici hesabi olusturulamadi. Lutfen girdileri kontrol edip tekrar deneyin.";
-  }
-  if (normalized.includes("one or more validation errors occurred") || normalized.includes("validation")) {
-    return "Gonderilen bilgilerde eksik veya hatali alanlar var.";
-  }
-  if (normalized.includes("sifre") || normalized.includes("password")) {
-    return rawError;
-  }
-
-  return "Islem sirasinda bir hata olustu. Lutfen tekrar deneyin.";
-};
 
 type IconProps = { name: string; style?: CSSProperties };
 const Icon = ({ name, style }: IconProps) => (
@@ -345,7 +282,7 @@ export default function CompanyCreatePage() {
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "Islem sirasinda bir hata olustu.";
+    let lastError: string = companyCreateErrorMessages.genericActionFailed;
     let hasAnyNetworkError = false;
     let hasAnyReachableResponse = false;
     const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
@@ -353,7 +290,7 @@ export default function CompanyCreatePage() {
     const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
 
     if (isPaymentSuccess && !effectivePlan && !effectiveSlug) {
-      setErrorMessage("Odeme basarili gorunuyor ancak plan bilgisi bulunamadi. Lutfen odeme adimini tekrar deneyin.");
+      setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
       setIsLoading(false);
       return;
     }
@@ -372,7 +309,18 @@ export default function CompanyCreatePage() {
         const createPayload = parsePayload<CreateCompanyResponse>(createRaw);
 
         if (!createResponse.ok) {
-          const createError = extractApiError(createPayload, createRaw, createResponse.status, lastError);
+          const createError = extractApiError({
+            payload: createPayload,
+            raw: createRaw,
+            statusCode: createResponse.status,
+            fallback: lastError,
+            statusCodeMap: {
+              401: "unauthorized",
+              404: "resource not found",
+              409: "already exists",
+              429: "too many requests",
+            },
+          });
           const friendlyError = toFriendlyCompanyCreateError(createError);
           if (createResponse.status < 500) {
             setErrorMessage(friendlyError);
@@ -385,7 +333,7 @@ export default function CompanyCreatePage() {
 
         const createdCompanyId = createPayload.companyId ?? createPayload.CompanyId ?? "";
         if (!guidRegex.test(createdCompanyId)) {
-          lastError = "Sirket olusturuldu ancak islem tamamlanamadi. Lutfen tekrar deneyin.";
+          lastError = companyCreateErrorMessages.companyCreatedButIncomplete;
           continue;
         }
 
@@ -406,13 +354,21 @@ export default function CompanyCreatePage() {
         const registerPayload = parsePayload<ApiErrorPayload>(registerRaw);
 
         if (!registerResponse.ok) {
-          const registerError = extractApiError(
-            registerPayload,
-            registerRaw,
-            registerResponse.status,
-            "Yonetici hesabi olusturulamadi."
+          const registerError = extractApiError({
+            payload: registerPayload,
+            raw: registerRaw,
+            statusCode: registerResponse.status,
+            fallback: companyCreateErrorMessages.registerFailed,
+            statusCodeMap: {
+              401: "unauthorized",
+              404: "resource not found",
+              409: "already exists",
+              429: "too many requests",
+            },
+          });
+          setErrorMessage(
+            `${companyCreateErrorMessages.companyCreatedButAdminFailedPrefix} ${toFriendlyCompanyCreateError(registerError)}`
           );
-          setErrorMessage(`Sirket olusturuldu ancak yonetici hesabi acilamadi: ${toFriendlyCompanyCreateError(registerError)}`);
           setIsLoading(false);
           return;
         }
@@ -433,14 +389,20 @@ export default function CompanyCreatePage() {
           const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
 
           if (!activateResponse.ok) {
-            const activateError = extractApiError(
-              activatePayload,
-              activateRaw,
-              activateResponse.status,
-              "Abonelik aktif edilemedi."
-            );
+            const activateError = extractApiError({
+              payload: activatePayload,
+              raw: activateRaw,
+              statusCode: activateResponse.status,
+              fallback: companyCreateErrorMessages.subscriptionActivationFailed,
+              statusCodeMap: {
+                401: "unauthorized",
+                404: "resource not found",
+                409: "already exists",
+                429: "too many requests",
+              },
+            });
             setErrorMessage(
-              `Sirket ve yonetici olusturuldu ancak abonelik aktif edilemedi: ${toFriendlyCompanyCreateError(activateError)}`
+              `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`
             );
             setIsLoading(false);
             return;
@@ -460,14 +422,14 @@ export default function CompanyCreatePage() {
           if (error instanceof Error && error.message) {
             lastError = toFriendlyCompanyCreateError(error.message);
           } else {
-            lastError = "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
+            lastError = companyCreateErrorMessages.networkUnavailable;
           }
         }
       }
     }
 
     if (hasAnyNetworkError && !hasAnyReachableResponse) {
-      setErrorMessage("Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.");
+      setErrorMessage(companyCreateErrorMessages.networkUnavailable);
       setIsLoading(false);
       return;
     }

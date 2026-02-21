@@ -1,7 +1,11 @@
 ﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useState, type CSSProperties } from "react";
 import { useForm } from "react-hook-form";
+import { useNavigate } from "react-router-dom";
 import { z } from "zod";
+import { extractApiError, parsePayload } from "../shared/errors/api";
+import { toFriendlyLoginError } from "../shared/errors/mappers";
+import { loginErrorMessages, validationMessages } from "../shared/errors/messages";
 
 type LoginResponse = {
   accessToken?: string;
@@ -15,20 +19,13 @@ type LoginResponse = {
 };
 
 const loginSchema = z.object({
-  email: z.string().trim().min(1, "E-posta zorunludur.").email("Gecerli bir e-posta girin."),
-  password: z.string().min(1, "Sifre zorunludur."),
+  email: z.string().trim().min(1, validationMessages.requiredEmail).email(validationMessages.invalidEmail),
+  password: z.string().min(1, validationMessages.requiredPassword),
 });
 
 type LoginFormValues = z.infer<typeof loginSchema>;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
-
-const normalizeText = (value: string) =>
-  value
-    .trim()
-    .toLocaleLowerCase("tr-TR")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
@@ -41,63 +38,6 @@ const getToken = (payload: LoginResponse, type: "access" | "refresh") =>
   type === "access"
     ? payload.accessToken ?? payload.AccessToken ?? ""
     : payload.refreshToken ?? payload.RefreshToken ?? "";
-
-const parsePayload = <T extends object>(raw: string): T => {
-  try {
-    return raw ? (JSON.parse(raw) as T) : ({} as T);
-  } catch {
-    return {} as T;
-  }
-};
-
-const extractApiError = (payload: LoginResponse, raw: string, statusCode: number): string => {
-  const validationError = payload.errors
-    ? Object.values(payload.errors).flat().find(Boolean)
-    : "";
-  if (validationError) return validationError;
-  if (payload.message) return payload.message;
-  if (payload.detail) return payload.detail;
-  if (payload.title) return payload.title;
-  if (raw.trim()) return raw;
-  if (statusCode === 401) return "unauthorized";
-  if (statusCode === 404) return "user not found";
-  return "";
-};
-
-const toFriendlyLoginError = (rawError: string): string => {
-  const normalized = normalizeText(rawError);
-
-  if (!normalized) {
-    return "Giris sirasinda bir hata olustu. Lutfen tekrar deneyin.";
-  }
-  if (
-    normalized.includes("sifre yanlis") ||
-    normalized.includes("wrong password") ||
-    normalized.includes("password")
-  ) {
-    return "E-posta veya sifre hatali.";
-  }
-  if (
-    normalized.includes("kullanici bulunamadi") ||
-    normalized.includes("user not found") ||
-    normalized.includes("resource not found")
-  ) {
-    return "Bu e-posta ile kayitli bir hesap bulunamadi.";
-  }
-  if (normalized.includes("authentication error") || normalized.includes("unauthorized")) {
-    return "Giris yapilamadi. Bilgilerinizi kontrol edip tekrar deneyin.";
-  }
-  if (
-    normalized.includes("failed to fetch") ||
-    normalized.includes("network error") ||
-    normalized.includes("api'ye erisilemedi") ||
-    normalized.includes("fetch")
-  ) {
-    return "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
-  }
-
-  return "Giris sirasinda bir hata olustu. Lutfen tekrar deneyin.";
-};
 
 type IconProps = { name: string; style?: CSSProperties };
 const Icon = ({ name, style }: IconProps) => (
@@ -138,6 +78,7 @@ const Blobs = ({ dark }: { dark: boolean }) => (
 );
 
 export default function LoginPage() {
+  const navigate = useNavigate();
   const [dark, setDark] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
@@ -161,7 +102,7 @@ export default function LoginPage() {
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "Giris sirasinda bir hata olustu. Lutfen tekrar deneyin.";
+    let lastError: string = loginErrorMessages.genericActionFailed;
     let hasAnyNetworkError = false;
     let hasAnyReachableResponse = false;
 
@@ -178,7 +119,18 @@ export default function LoginPage() {
         const payload = parsePayload<LoginResponse>(raw);
 
         if (!response.ok) {
-          const friendlyError = toFriendlyLoginError(extractApiError(payload, raw, response.status));
+          const friendlyError = toFriendlyLoginError(
+            extractApiError({
+              payload,
+              raw,
+              statusCode: response.status,
+              statusCodeMap: {
+                401: "unauthorized",
+                404: "user not found",
+                429: "too many requests",
+              },
+            })
+          );
           if (response.status < 500) {
             setErrorMessage(friendlyError);
             setIsLoading(false);
@@ -192,14 +144,16 @@ export default function LoginPage() {
         const refreshToken = getToken(payload, "refresh");
 
         if (!accessToken || !refreshToken) {
-          lastError = "Giris tamamlanamadi. Lutfen tekrar deneyin.";
+          lastError = loginErrorMessages.tokenValidationFailed;
           continue;
         }
 
         window.localStorage.setItem("taskflow_access_token", accessToken);
         window.localStorage.setItem("taskflow_refresh_token", refreshToken);
         setSuccessMessage("Giris basarili. Workspace sayfasina yonlendiriliyorsun.");
-        setTimeout(() => { window.location.href = "/workspace"; }, 900);
+        setTimeout(() => {
+          navigate("/workspace", { replace: true });
+        }, 900);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
@@ -207,14 +161,14 @@ export default function LoginPage() {
           if (error instanceof Error && error.message) {
             lastError = toFriendlyLoginError(error.message);
           } else {
-            lastError = "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
+            lastError = loginErrorMessages.networkUnavailable;
           }
         }
       }
     }
 
     if (hasAnyNetworkError && !hasAnyReachableResponse) {
-      setErrorMessage("Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.");
+      setErrorMessage(loginErrorMessages.networkUnavailable);
       setIsLoading(false);
       return;
     }
