@@ -596,6 +596,69 @@ export default function CompanyCreatePage() {
           return;
         }
 
+        const activationPlanName = effectivePlan || "Start-up";
+        const activationPlanSlug = effectiveSlug || getPlanSlug(activationPlanName);
+        const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
+        let activationLastError: string = companyCreateErrorMessages.subscriptionActivationFailed;
+        let isSubscriptionActivated = false;
+
+        for (const subscriptionApiBaseUrl of getApiBaseUrlCandidates()) {
+          try {
+            const activateResponse = await fetch(buildApiUrl(subscriptionApiBaseUrl, activateSubscriptionPath), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                companyId: createdCompanyId,
+                planName: activationPlanName || undefined,
+                planSlug: activationPlanSlug || undefined,
+              }),
+            });
+
+            const activateRaw = await activateResponse.text();
+            const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
+
+            if (!activateResponse.ok) {
+              const activateError = extractApiError({
+                payload: activatePayload,
+                raw: activateRaw,
+                statusCode: activateResponse.status,
+                fallback: companyCreateErrorMessages.subscriptionActivationFailed,
+                statusCodeMap: {
+                  401: "unauthorized",
+                  404: "resource not found",
+                  409: "already exists",
+                  429: "too many requests",
+                },
+              });
+              const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
+
+              if (activateResponse.status < 500) {
+                setErrorMessage(friendlyError);
+                setIsLoading(false);
+                return;
+              }
+
+              activationLastError = friendlyError;
+              continue;
+            }
+
+            isSubscriptionActivated = true;
+            break;
+          } catch (error) {
+            if (error instanceof Error && error.message) {
+              activationLastError = toFriendlyCompanyCreateError(error.message);
+            } else {
+              activationLastError = companyCreateErrorMessages.networkUnavailable;
+            }
+          }
+        }
+
+        if (!isSubscriptionActivated) {
+          setErrorMessage(activationLastError);
+          setIsLoading(false);
+          return;
+        }
+
         clearPendingPlanSelection();
         setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Giris sayfasina yonlendiriliyorsunuz.");
         setTimeout(() => { window.location.href = "/auth/login"; }, 1200);
