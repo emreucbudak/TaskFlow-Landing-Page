@@ -1,482 +1,673 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 
-/* ─── tiny helpers ─── */
-function Avatar({
-  initials,
-  bg,
-  size = 32,
-  border = true,
-}: {
-  initials: string;
-  bg: string;
-  size?: number;
-  border?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        width: size,
-        height: size,
-        borderRadius: "50%",
-        background: bg,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: "#fff",
-        fontSize: size * 0.36,
-        fontWeight: 700,
-        flexShrink: 0,
-        border: border ? "2px solid #fff" : "none",
-      }}
-    >
-      {initials}
-    </div>
-  );
-}
+const sidebarItems = [
+  { label: "Panel", icon: "⊞" },
+  { label: "Projeler", icon: "◫" },
+  { label: "Takvim", icon: "◻" },
+  { label: "Bildirimler", icon: "◬" },
+  { label: "Ayarlar", icon: "◎" },
+];
 
-function AvatarStack({
-  list,
-  extra,
-}: {
-  list: { initials: string; bg: string }[];
-  extra: number;
-}) {
-  return (
-    <div style={{ display: "flex", alignItems: "center" }}>
-      {list.map((a, i) => (
-        <div key={i} style={{ marginLeft: i === 0 ? 0 : -8, zIndex: list.length - i }}>
-          <Avatar initials={a.initials} bg={a.bg} size={26} />
-        </div>
-      ))}
-      {extra > 0 && (
-        <div
-          style={{
-            marginLeft: -8,
-            width: 26,
-            height: 26,
-            borderRadius: "50%",
-            background: "#E5E7EB",
-            border: "2px solid #fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 10,
-            fontWeight: 700,
-            color: "#6B7280",
-          }}
-        >
-          +{extra}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Badge({ label, color, bg }: { label: string; color: string; bg: string }) {
-  return (
-    <span
-      style={{
-        background: bg,
-        color,
-        fontSize: 10,
-        fontWeight: 700,
-        padding: "2px 9px",
-        borderRadius: 6,
-      }}
-    >
-      {label}
-    </span>
-  );
-}
-
-/* ─── data ─── */
-const departments = [
-  {
-    name: "Mühendislik",
-    desc: "Temel platform geliştirme ve API entegrasyonundan sorumludur.",
-    iconBg: "#EFF6FF",
-    icon: (
-      <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-        <path d="M12 2L2 7l10 5 10-5-10-5z" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M2 17l10 5 10-5M2 12l10 5 10-5" stroke="#3B82F6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-    avatars: [
-      { initials: "SM", bg: "#4F46E5" },
-      { initials: "DK", bg: "#059669" },
-    ],
-    extra: 9,
-  },
-  {
-    name: "Pazarlama",
-    desc: "Kampanya stratejisi, sosyal medya yönetimi ve marka çalışmalarını yürütür.",
-    iconBg: "#FFF7ED",
-    icon: (
-      <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-        <path d="M22 12h-4l-3 9L9 3l-3 9H2" stroke="#F97316" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-    avatars: [{ initials: "AL", bg: "#DC2626" }],
-    extra: 6,
-  },
+const stats = [
+  { label: "Aktif Görevler", value: "24", delta: "+3 bu hafta" },
+  { label: "Tamamlanan", value: "118", delta: "+12 bu ay" },
+  { label: "Projeler", value: "7", delta: "2 yakında bitiyor" },
 ];
 
 const tasks = [
-  {
-    icon: (
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24">
-        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="#9CA3AF" strokeWidth="2" />
-        <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    ),
-    title: "3. Çeyrek Finans Raporu",
-    calIcon: "📅",
-    when: "Bugün",
-    tag: "Muhasebe",
-    badge: { label: "Yüksek", color: "#DC2626", bg: "#FEE2E2" },
-    avatar: { initials: "SM", bg: "#4F46E5" },
-  },
-  {
-    icon: (
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24">
-        <circle cx="12" cy="12" r="9" stroke="#9CA3AF" strokeWidth="2" />
-        <path d="M12 7v5l3 3" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    ),
-    title: "Ana Sayfa Hero Alanını Güncelle",
-    calIcon: "📅",
-    when: "Yarın",
-    tag: "Tasarım",
-    badge: { label: "Orta", color: "#D97706", bg: "#FEF3C7" },
-    avatar: { initials: "DK", bg: "#059669" },
-  },
-  {
-    icon: (
-      <svg width="16" height="16" fill="none" viewBox="0 0 24 24">
-        <polyline points="16 18 22 12 16 6" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        <polyline points="8 6 2 12 8 18" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    ),
-    title: "API Dokümantasyonu",
-    calIcon: "⏱",
-    when: "Tamamlandı",
-    tag: "Geliştirme Ekibi",
-    badge: { label: "Düşük", color: "#16A34A", bg: "#DCFCE7" },
-    avatar: { initials: "AL", bg: "#DC2626" },
-  },
+  { title: "Kullanıcı arayüzü revizyonu", project: "Ürün Tasarımı", priority: "Yüksek", due: "Bugün", status: 75 },
+  { title: "API entegrasyonu", project: "Backend", priority: "Orta", due: "Yarın", status: 40 },
+  { title: "Performans testleri", project: "QA", priority: "Düşük", due: "Cum", status: 10 },
+  { title: "Mobil uyumluluk", project: "Frontend", priority: "Yüksek", due: "Paz", status: 60 },
 ];
 
-const activities = [
-  { name: "Sarah M.", action: "şu öğeye yorum yaptı:", target: "Logo Yenileme", time: "10 dk önce" },
-  { name: "David K.", action: "şu öğeyi tamamladı:", target: "Kullanıcı Akış Diyagramı", time: "1 saat önce" },
-  { name: "Yeni Dosya", action: "şu alana yüklendi:", target: "Varlıklar", time: "3 saat önce" },
-];
+const priorityColors: Record<string, string> = {
+  Yüksek: "#FF5757",
+  Orta: "#FFB547",
+  Düşük: "#4ADE80",
+};
 
-const bottomTabs = ["Ana Sayfa", "Görevler", "Sohbet", "Menü"];
+export default function WorkspacePage() {
+  const [activeItem, setActiveItem] = useState("Panel");
 
-/* ─── component ─── */
-export default function Dashboard() {
-  const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState("Ana Sayfa");
-  const currentDateLabel = new Intl.DateTimeFormat("tr-TR", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-  })
-    .format(new Date())
-    .replace(/^./, (char) => char.toLocaleUpperCase("tr-TR"));
-
-  const handleTabClick = (tab: string) => {
-    setActiveTab(tab);
-
-    if (tab === "Ana Sayfa") {
-      navigate("/workspace");
-      return;
-    }
-
-    if (tab === "Görevler") {
-      navigate("/workspace/tasks");
-      return;
-    }
-
-    if (tab === "Sohbet") {
-      navigate("/workspace/chat");
-    }
+  const handleLogout = () => {
+    window.localStorage.removeItem("taskflow_access_token");
+    window.localStorage.removeItem("taskflow_refresh_token");
+    window.location.href = "/auth/login";
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#F3F4F6",
-        fontFamily: "'DM Sans','Segoe UI',sans-serif",
-        display: "flex",
-        justifyContent: "center",
-        alignItems: "flex-start",
-        padding: "0 20px",
-      }}
-    >
-      {/* ── outer card that mimics the original phone frame but wider ── */}
-      <div
-        style={{
-          width: "100%",
-          maxWidth: 1200,
-          minHeight: "100vh",
-          background: "#F3F4F6",
-          borderRadius: 24,
-          boxShadow: "0 4px 40px rgba(0,0,0,0.10)",
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          position: "relative",
-        }}
-      >
-        {/* ════ HEADER ════ */}
-        <div style={{ background: "#fff", padding: "20px 32px 16px" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div>
-              <div style={{ fontSize: 12, color: "#9CA3AF" }}>{currentDateLabel}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>Hoş geldin, Alex</div>
+    <>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=DM+Mono:wght@300;400;500&display=swap');
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        .workspace-root {
+          min-height: 100vh;
+          background: #0A0A0F;
+          font-family: 'Syne', sans-serif;
+          display: flex;
+          justify-content: center;
+          overflow-x: hidden;
+        }
+
+        .workspace-grid {
+          width: 100%;
+          max-width: 1280px;
+          display: grid;
+          grid-template-columns: 220px 1fr;
+          min-height: 100vh;
+        }
+
+        /* ── SIDEBAR ── */
+        .sidebar {
+          background: #0F0F17;
+          border-right: 1px solid rgba(255,255,255,0.05);
+          display: flex;
+          flex-direction: column;
+          padding: 28px 16px;
+          position: sticky;
+          top: 0;
+          height: 100vh;
+          overflow: hidden;
+        }
+
+        .sidebar::before {
+          content: '';
+          position: absolute;
+          top: -60px;
+          left: -40px;
+          width: 180px;
+          height: 180px;
+          background: radial-gradient(circle, rgba(99,102,241,0.18) 0%, transparent 70%);
+          pointer-events: none;
+        }
+
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 0 8px;
+          margin-bottom: 36px;
+        }
+
+        .brand-mark {
+          width: 32px;
+          height: 32px;
+          background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+          border-radius: 8px;
+          display: grid;
+          place-items: center;
+          font-size: 14px;
+          color: #fff;
+          flex-shrink: 0;
+        }
+
+        .brand-name {
+          font-size: 18px;
+          font-weight: 800;
+          color: #F9FAFB;
+          letter-spacing: -0.5px;
+        }
+
+        .nav-label {
+          font-family: 'DM Mono', monospace;
+          font-size: 10px;
+          font-weight: 500;
+          color: rgba(255,255,255,0.25);
+          letter-spacing: 2px;
+          text-transform: uppercase;
+          padding: 0 8px;
+          margin-bottom: 8px;
+        }
+
+        .nav-list {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+
+        .nav-btn {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border: none;
+          border-radius: 10px;
+          padding: 10px 12px;
+          cursor: pointer;
+          width: 100%;
+          text-align: left;
+          font-family: 'Syne', sans-serif;
+          font-size: 14px;
+          font-weight: 500;
+          transition: all 0.18s ease;
+          position: relative;
+          overflow: hidden;
+          background: transparent;
+          color: rgba(255,255,255,0.45);
+        }
+
+        .nav-btn:hover {
+          background: rgba(255,255,255,0.05);
+          color: rgba(255,255,255,0.8);
+        }
+
+        .nav-btn.active {
+          background: rgba(99,102,241,0.15);
+          color: #A5B4FC;
+          font-weight: 700;
+        }
+
+        .nav-btn.active::before {
+          content: '';
+          position: absolute;
+          left: 0;
+          top: 20%;
+          height: 60%;
+          width: 3px;
+          background: #6366F1;
+          border-radius: 0 3px 3px 0;
+        }
+
+        .nav-icon {
+          width: 20px;
+          height: 20px;
+          display: grid;
+          place-items: center;
+          font-size: 15px;
+          opacity: 0.7;
+        }
+
+        .sidebar-footer {
+          margin-top: auto;
+          padding-top: 16px;
+          border-top: 1px solid rgba(255,255,255,0.05);
+        }
+
+        .user-card {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px 8px;
+          border-radius: 10px;
+          margin-bottom: 8px;
+        }
+
+        .avatar {
+          width: 34px;
+          height: 34px;
+          border-radius: 50%;
+          background: linear-gradient(135deg, #6366F1, #EC4899);
+          display: grid;
+          place-items: center;
+          font-size: 13px;
+          font-weight: 700;
+          color: #fff;
+          flex-shrink: 0;
+        }
+
+        .user-info { flex: 1; overflow: hidden; }
+        .user-name { font-size: 13px; font-weight: 700; color: #F3F4F6; }
+        .user-role { font-size: 11px; color: rgba(255,255,255,0.35); font-family: 'DM Mono', monospace; }
+
+        .logout-btn {
+          width: 100%;
+          border: none;
+          border-radius: 10px;
+          padding: 9px 12px;
+          cursor: pointer;
+          background: rgba(239,68,68,0.08);
+          color: #F87171;
+          font-weight: 600;
+          font-size: 13px;
+          font-family: 'Syne', sans-serif;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          transition: all 0.18s ease;
+          border: 1px solid rgba(239,68,68,0.12);
+        }
+
+        .logout-btn:hover {
+          background: rgba(239,68,68,0.15);
+          border-color: rgba(239,68,68,0.3);
+        }
+
+        /* ── MAIN ── */
+        .main {
+          background: #0A0A0F;
+          padding: 32px 36px;
+          overflow-y: auto;
+        }
+
+        .topbar {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          margin-bottom: 32px;
+        }
+
+        .page-title {
+          font-size: 28px;
+          font-weight: 800;
+          color: #F9FAFB;
+          letter-spacing: -1px;
+        }
+
+        .page-sub {
+          font-size: 13px;
+          color: rgba(255,255,255,0.35);
+          margin-top: 4px;
+          font-family: 'DM Mono', monospace;
+        }
+
+        .add-btn {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          background: linear-gradient(135deg, #6366F1 0%, #8B5CF6 100%);
+          border: none;
+          border-radius: 10px;
+          padding: 10px 18px;
+          color: #fff;
+          font-family: 'Syne', sans-serif;
+          font-size: 14px;
+          font-weight: 700;
+          cursor: pointer;
+          box-shadow: 0 8px 24px rgba(99,102,241,0.3);
+          transition: all 0.18s ease;
+        }
+
+        .add-btn:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 12px 32px rgba(99,102,241,0.4);
+        }
+
+        /* Stats */
+        .stats-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 16px;
+          margin-bottom: 28px;
+        }
+
+        .stat-card {
+          background: #13131C;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 14px;
+          padding: 20px 22px;
+          position: relative;
+          overflow: hidden;
+          transition: border-color 0.2s;
+        }
+
+        .stat-card:hover { border-color: rgba(99,102,241,0.3); }
+
+        .stat-card::after {
+          content: '';
+          position: absolute;
+          bottom: -20px;
+          right: -20px;
+          width: 80px;
+          height: 80px;
+          background: radial-gradient(circle, rgba(99,102,241,0.1) 0%, transparent 70%);
+          pointer-events: none;
+        }
+
+        .stat-label {
+          font-size: 11px;
+          font-weight: 500;
+          color: rgba(255,255,255,0.35);
+          text-transform: uppercase;
+          letter-spacing: 1.5px;
+          font-family: 'DM Mono', monospace;
+          margin-bottom: 10px;
+        }
+
+        .stat-value {
+          font-size: 36px;
+          font-weight: 800;
+          color: #F9FAFB;
+          letter-spacing: -2px;
+          line-height: 1;
+          margin-bottom: 8px;
+        }
+
+        .stat-delta {
+          font-size: 12px;
+          color: #4ADE80;
+          font-family: 'DM Mono', monospace;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+        }
+
+        /* Tasks */
+        .section-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 16px;
+        }
+
+        .section-title {
+          font-size: 16px;
+          font-weight: 700;
+          color: #F9FAFB;
+          letter-spacing: -0.3px;
+        }
+
+        .view-all {
+          font-size: 12px;
+          color: #6366F1;
+          background: none;
+          border: none;
+          cursor: pointer;
+          font-family: 'DM Mono', monospace;
+          transition: opacity 0.15s;
+        }
+
+        .view-all:hover { opacity: 0.7; }
+
+        .tasks-list {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+
+        .task-row {
+          background: #13131C;
+          border: 1px solid rgba(255,255,255,0.05);
+          border-radius: 12px;
+          padding: 16px 18px;
+          display: grid;
+          grid-template-columns: 1fr auto auto 180px;
+          align-items: center;
+          gap: 16px;
+          transition: all 0.18s ease;
+        }
+
+        .task-row:hover {
+          border-color: rgba(255,255,255,0.1);
+          background: #16161F;
+          transform: translateX(4px);
+        }
+
+        .task-title {
+          font-size: 14px;
+          font-weight: 600;
+          color: #E5E7EB;
+        }
+
+        .task-project {
+          font-size: 11px;
+          color: rgba(255,255,255,0.3);
+          font-family: 'DM Mono', monospace;
+          margin-top: 3px;
+        }
+
+        .priority-tag {
+          font-size: 11px;
+          font-weight: 700;
+          font-family: 'DM Mono', monospace;
+          padding: 3px 9px;
+          border-radius: 20px;
+          border: 1px solid;
+          white-space: nowrap;
+        }
+
+        .due-tag {
+          font-size: 12px;
+          color: rgba(255,255,255,0.4);
+          font-family: 'DM Mono', monospace;
+          white-space: nowrap;
+          min-width: 44px;
+          text-align: right;
+        }
+
+        .progress-wrap { display: flex; align-items: center; gap: 10px; }
+
+        .progress-bar {
+          flex: 1;
+          height: 4px;
+          background: rgba(255,255,255,0.07);
+          border-radius: 99px;
+          overflow: hidden;
+        }
+
+        .progress-fill {
+          height: 100%;
+          border-radius: 99px;
+          background: linear-gradient(90deg, #6366F1, #A78BFA);
+          transition: width 0.4s ease;
+        }
+
+        .progress-pct {
+          font-size: 11px;
+          font-family: 'DM Mono', monospace;
+          color: rgba(255,255,255,0.3);
+          min-width: 28px;
+          text-align: right;
+        }
+
+        /* Bottom grid */
+        .bottom-grid {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 16px;
+          margin-top: 28px;
+        }
+
+        .card {
+          background: #13131C;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 14px;
+          padding: 22px;
+        }
+
+        .activity-item {
+          display: flex;
+          gap: 12px;
+          align-items: flex-start;
+          padding: 10px 0;
+          border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+
+        .activity-item:last-child { border-bottom: none; }
+
+        .activity-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          background: #6366F1;
+          flex-shrink: 0;
+          margin-top: 5px;
+        }
+
+        .activity-text {
+          font-size: 13px;
+          color: rgba(255,255,255,0.55);
+          line-height: 1.5;
+        }
+
+        .activity-text strong { color: rgba(255,255,255,0.85); font-weight: 600; }
+
+        .activity-time {
+          font-size: 11px;
+          color: rgba(255,255,255,0.2);
+          font-family: 'DM Mono', monospace;
+          margin-left: auto;
+          flex-shrink: 0;
+          padding-left: 8px;
+        }
+
+        /* Chart placeholder */
+        .mini-bars {
+          display: flex;
+          align-items: flex-end;
+          gap: 6px;
+          height: 80px;
+          margin-top: 16px;
+        }
+
+        .bar {
+          flex: 1;
+          border-radius: 5px 5px 0 0;
+          background: linear-gradient(180deg, #6366F1 0%, rgba(99,102,241,0.3) 100%);
+          min-height: 8px;
+          transition: opacity 0.2s;
+        }
+
+        .bar:hover { opacity: 0.75; }
+
+        .chart-labels {
+          display: flex;
+          gap: 6px;
+          margin-top: 8px;
+        }
+
+        .chart-label {
+          flex: 1;
+          text-align: center;
+          font-size: 10px;
+          color: rgba(255,255,255,0.2);
+          font-family: 'DM Mono', monospace;
+        }
+      `}</style>
+
+      <main className="workspace-root">
+        <section className="workspace-grid">
+
+          {/* SIDEBAR */}
+          <aside className="sidebar">
+            <div className="brand">
+              <div className="brand-mark">T</div>
+              <span className="brand-name">TaskFlow</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-              <div style={{ position: "relative", cursor: "pointer" }}>
-                <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
-                  <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" stroke="#374151" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                <div style={{ position: "absolute", top: -3, right: -3, width: 8, height: 8, background: "#EF4444", borderRadius: "50%", border: "1.5px solid #fff" }} />
-              </div>
-              <Avatar initials="AX" bg="#4F46E5" size={36} border={false} />
-            </div>
-          </div>
 
-          {/* search */}
-          <div
-            style={{
-              marginTop: 14,
-              background: "#F9FAFB",
-              border: "1px solid #E5E7EB",
-              borderRadius: 10,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              padding: "10px 16px",
-            }}
-          >
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24">
-              <circle cx="11" cy="11" r="8" stroke="#9CA3AF" strokeWidth="2" />
-              <path d="M21 21l-4.35-4.35" stroke="#9CA3AF" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <span style={{ fontSize: 13, color: "#9CA3AF" }}>Görevlerde ve departmanlarda ara...</span>
-          </div>
-        </div>
-
-        {/* ════ BODY ════ */}
-        <div style={{ padding: "24px 32px", display: "flex", flexDirection: "column", gap: 28 }}>
-
-          {/* ── Overview ── */}
-          <section>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>Genel Bakış</span>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1.4fr 1fr", gap: 16 }}>
-              {/* Pending */}
-              <div style={{ background: "#fff", borderRadius: 16, padding: "22px 20px", textAlign: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-                <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}>
-                  <div style={{ width: 40, height: 40, background: "#FFF7ED", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="9" stroke="#F97316" strokeWidth="2" />
-                      <path d="M12 7v5l3 3" stroke="#F97316" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                  </div>
-                </div>
-                <div style={{ fontSize: 36, fontWeight: 900, color: "#111827" }}>12</div>
-                <div style={{ fontSize: 10, color: "#9CA3AF", letterSpacing: 1.2, marginTop: 4 }}>BEKLEYEN</div>
-              </div>
-
-              {/* Active */}
-              <div style={{ background: "#2D4FE0", borderRadius: 16, padding: "22px 20px", textAlign: "center", boxShadow: "0 6px 24px rgba(45,79,224,0.40)" }}>
-                <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}>
-                  <div style={{ width: 40, height: 40, background: "rgba(255,255,255,0.18)", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <svg width="20" height="20" fill="none" viewBox="0 0 24 24">
-                      <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                </div>
-                <div style={{ fontSize: 36, fontWeight: 900, color: "#fff" }}>5</div>
-                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.65)", letterSpacing: 1.2, marginTop: 4 }}>AKTİF</div>
-              </div>
-
-              {/* Done */}
-              <div style={{ background: "#fff", borderRadius: 16, padding: "22px 20px", textAlign: "center", boxShadow: "0 1px 4px rgba(0,0,0,0.06)" }}>
-                <div style={{ marginBottom: 8, display: "flex", justifyContent: "center" }}>
-                  <div style={{ width: 40, height: 40, background: "#F0FDF4", borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
-                      <circle cx="12" cy="12" r="9" stroke="#22C55E" strokeWidth="2" />
-                      <path d="M9 12l2 2 4-4" stroke="#22C55E" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </div>
-                </div>
-                <div style={{ fontSize: 36, fontWeight: 900, color: "#111827" }}>28</div>
-                <div style={{ fontSize: 10, color: "#9CA3AF", letterSpacing: 1.2, marginTop: 4 }}>TAMAMLANDI</div>
-              </div>
-            </div>
-          </section>
-
-          {/* ── Departments ── */}
-          <section>
-            <div style={{ fontWeight: 700, fontSize: 15, color: "#111827", marginBottom: 14 }}>Departmanlar</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-              {departments.map((dept, i) => (
-                <div
-                  key={i}
-                  style={{ background: "#fff", borderRadius: 16, padding: "18px 20px", boxShadow: "0 1px 4px rgba(0,0,0,0.06)", cursor: "pointer" }}
+            <div className="nav-label">Menü</div>
+            <nav className="nav-list">
+              {sidebarItems.map(({ label, icon }) => (
+                <button
+                  key={label}
+                  className={`nav-btn${activeItem === label ? " active" : ""}`}
+                  onClick={() => setActiveItem(label)}
                 >
-                  <div style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-                    <div style={{ width: 40, height: 40, borderRadius: 12, background: dept.iconBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      {dept.icon}
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: "#111827" }}>{dept.name}</div>
-                      <div style={{ fontSize: 12, color: "#9CA3AF", marginTop: 3, lineHeight: 1.5 }}>{dept.desc}</div>
-                    </div>
+                  <span className="nav-icon">{icon}</span>
+                  {label}
+                </button>
+              ))}
+            </nav>
+
+            <div className="sidebar-footer">
+              <div className="user-card">
+                <div className="avatar">AY</div>
+                <div className="user-info">
+                  <div className="user-name">Ahmet Yılmaz</div>
+                  <div className="user-role">Pro Plan</div>
+                </div>
+              </div>
+              <button className="logout-btn" onClick={handleLogout}>
+                <span>↩</span> Çıkış Yap
+              </button>
+            </div>
+          </aside>
+
+          {/* MAIN */}
+          <main className="main">
+            <div className="topbar">
+              <div>
+                <h1 className="page-title">Panel</h1>
+                <p className="page-sub">Pzt, 22 Şubat 2026</p>
+              </div>
+              <button className="add-btn">
+                <span>+</span> Yeni Görev
+              </button>
+            </div>
+
+            {/* Stats */}
+            <div className="stats-grid">
+              {stats.map((s) => (
+                <div key={s.label} className="stat-card">
+                  <div className="stat-label">{s.label}</div>
+                  <div className="stat-value">{s.value}</div>
+                  <div className="stat-delta">↑ {s.delta}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Tasks */}
+            <div className="section-header">
+              <span className="section-title">Aktif Görevler</span>
+              <button className="view-all">tümünü gör →</button>
+            </div>
+
+            <div className="tasks-list">
+              {tasks.map((t) => (
+                <div key={t.title} className="task-row">
+                  <div>
+                    <div className="task-title">{t.title}</div>
+                    <div className="task-project">{t.project}</div>
                   </div>
-                  <div style={{ marginTop: 14 }}>
-                    <AvatarStack list={dept.avatars} extra={dept.extra} />
+                  <span
+                    className="priority-tag"
+                    style={{
+                      color: priorityColors[t.priority],
+                      borderColor: `${priorityColors[t.priority]}40`,
+                      background: `${priorityColors[t.priority]}10`,
+                    }}
+                  >
+                    {t.priority}
+                  </span>
+                  <div className="due-tag">{t.due}</div>
+                  <div className="progress-wrap">
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: `${t.status}%` }} />
+                    </div>
+                    <span className="progress-pct">{t.status}%</span>
                   </div>
                 </div>
               ))}
             </div>
-          </section>
 
-          {/* ── Recent Tasks + Group Activity side by side ── */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 20 }}>
-
-            {/* Recent Tasks */}
-            <section>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-                <span style={{ fontWeight: 700, fontSize: 15, color: "#111827" }}>Son Görevler</span>
-                <span style={{ fontSize: 12, color: "#3B5BDB", fontWeight: 600, cursor: "pointer" }}>Tümünü Gör</span>
-              </div>
-              <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", overflow: "hidden" }}>
-                {tasks.map((t, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 14,
-                      padding: "16px 20px",
-                      borderBottom: i < tasks.length - 1 ? "1px solid #F3F4F6" : "none",
-                      cursor: "pointer",
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = "#FAFAFA")}
-                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
-                  >
-                    <div style={{ width: 36, height: 36, background: "#F9FAFB", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-                      {t.icon}
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 600, fontSize: 14, color: "#111827" }}>{t.title}</div>
-                      <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 3 }}>
-                        {t.calIcon} {t.when} · {t.tag}
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
-                      <Badge label={t.badge.label} color={t.badge.color} bg={t.badge.bg} />
-                      <Avatar initials={t.avatar.initials} bg={t.avatar.bg} size={30} />
-                    </div>
+            {/* Bottom */}
+            <div className="bottom-grid">
+              <div className="card">
+                <div className="section-title" style={{ marginBottom: 4 }}>Son Aktiviteler</div>
+                {[
+                  { text: <><strong>API entegrasyonu</strong> görevi güncellendi</>, time: "2 dk" },
+                  { text: <><strong>Mobil uyumluluk</strong> %60 tamamlandı</>, time: "1 sa" },
+                  { text: <><strong>Yeni proje</strong> oluşturuldu: QA</>, time: "3 sa" },
+                  { text: <><strong>Performans testleri</strong> atandı</>, time: "Dün" },
+                ].map((a, i) => (
+                  <div key={i} className="activity-item">
+                    <div className="activity-dot" />
+                    <span className="activity-text">{a.text}</span>
+                    <span className="activity-time">{a.time}</span>
                   </div>
                 ))}
               </div>
-            </section>
 
-            {/* Group Activity */}
-            <section>
-              <div style={{ fontWeight: 700, fontSize: 15, color: "#111827", marginBottom: 14 }}>Grup Aktivitesi</div>
-              <div style={{ background: "#fff", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", padding: "8px 20px" }}>
-                {activities.map((a, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      padding: "12px 0",
-                      borderBottom: i < activities.length - 1 ? "1px solid #F3F4F6" : "none",
-                    }}
-                  >
-                    <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#3B5BDB", marginTop: 6, flexShrink: 0 }} />
-                    <div>
-                      <div style={{ fontSize: 13, color: "#374151", lineHeight: 1.5 }}>
-                        <span style={{ fontWeight: 700 }}>{a.name}</span>{" "}
-                        <span style={{ color: "#6B7280" }}>{a.action}</span>{" "}
-                        <span style={{ color: "#3B5BDB", fontWeight: 600, cursor: "pointer" }}>{a.target}</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: "#9CA3AF", marginTop: 2 }}>{a.time}</div>
-                    </div>
-                  </div>
-                ))}
-                <div style={{ textAlign: "center", padding: "12px 0 6px", fontSize: 13, color: "#6B7280", fontWeight: 500, cursor: "pointer" }}>
-                  Aktivite Kaydını Gör
+              <div className="card">
+                <div className="section-title">Haftalık İlerleme</div>
+                <div className="mini-bars">
+                  {[45, 70, 55, 80, 60, 90, 40].map((h, i) => (
+                    <div key={i} className="bar" style={{ height: `${h}%` }} />
+                  ))}
+                </div>
+                <div className="chart-labels">
+                  {["Pzt", "Sal", "Çar", "Per", "Cum", "Cmt", "Paz"].map((d) => (
+                    <span key={d} className="chart-label">{d}</span>
+                  ))}
                 </div>
               </div>
-            </section>
-          </div>
-        </div>
+            </div>
+          </main>
 
-        {/* ════ BOTTOM NAV ════ */}
-        <div
-          style={{
-            background: "#fff",
-            borderTop: "1px solid #F1F1F1",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-around",
-            padding: "12px 0 16px",
-            position: "sticky",
-            bottom: 0,
-          }}
-        >
-          {bottomTabs.slice(0, 2).map(tab => (
-            <button
-              key={tab}
-              onClick={() => handleTabClick(tab)}
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab ? "#3B5BDB" : "#9CA3AF", padding: "0 24px" }}
-            >
-              <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
-                {tab === "Ana Sayfa" && <><path d="M3 12L12 3l9 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M9 21V12h6v9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></>}
-                {tab === "Görevler" && <><rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="2" /><path d="M8 12l3 3 5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></>}
-              </svg>
-              <span style={{ fontSize: 10, fontWeight: activeTab === tab ? 700 : 500 }}>{tab}</span>
-            </button>
-          ))}
-
-          {/* FAB */}
-          <button
-            style={{ width: 50, height: 50, borderRadius: "50%", background: "#3B5BDB", border: "none", display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", boxShadow: "0 4px 16px rgba(59,91,219,0.45)" }}
-          >
-            <svg width="24" height="24" fill="none" viewBox="0 0 24 24">
-              <path d="M12 5v14M5 12h14" stroke="#fff" strokeWidth="2.5" strokeLinecap="round" />
-            </svg>
-          </button>
-
-          {bottomTabs.slice(2).map(tab => (
-            <button
-              key={tab}
-              onClick={() => handleTabClick(tab)}
-              style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab ? "#3B5BDB" : "#9CA3AF", padding: "0 24px" }}
-            >
-              <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
-                {tab === "Sohbet" && <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />}
-                {tab === "Menü" && <><rect x="3" y="3" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="2" /><rect x="13" y="3" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="2" /><rect x="3" y="13" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="2" /><rect x="13" y="13" width="8" height="8" rx="1.5" stroke="currentColor" strokeWidth="2" /></>}
-              </svg>
-              <span style={{ fontSize: 10, fontWeight: activeTab === tab ? 700 : 500 }}>{tab}</span>
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
+        </section>
+      </main>
+    </>
   );
 }
