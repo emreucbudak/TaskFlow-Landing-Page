@@ -1,4 +1,7 @@
-﻿import { useMemo, useState, type CSSProperties } from "react";
+﻿import { zodResolver } from "@hookform/resolvers/zod";
+import { useMemo, useState, type CSSProperties } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 type ApiErrorPayload = {
   message?: string;
@@ -16,6 +19,26 @@ type CreateCompanyResponse = {
   errors?: Record<string, string[]>;
 };
 
+const companyCreateSchema = z
+  .object({
+    companyName: z.string().trim().min(1, "Lutfen sirket adini girin."),
+    adminName: z.string().trim().min(1, "Lutfen yonetici adini girin."),
+    adminEmail: z.string().trim().min(1, "E-posta zorunludur.").email("Gecerli bir e-posta girin."),
+    password: z
+      .string()
+      .min(8, "Sifre en az 8 karakter olmali.")
+      .regex(/[A-Z]/, "Sifre en az 1 buyuk harf icermeli.")
+      .regex(/[a-z]/, "Sifre en az 1 kucuk harf icermeli.")
+      .regex(/[0-9]/, "Sifre en az 1 rakam icermeli."),
+    confirmPassword: z.string().min(1, "Sifre tekrari zorunludur."),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    message: "Sifreler eslesmiyor.",
+    path: ["confirmPassword"],
+  });
+
+type CompanyCreateFormValues = z.infer<typeof companyCreateSchema>;
+
 const guidRegex =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -26,6 +49,13 @@ const readQuery = () => {
 };
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
+
+const normalizeText = (value: string) =>
+  value
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl =
@@ -56,6 +86,7 @@ const parsePayload = <T extends object>(raw: string): T => {
 const extractApiError = (
   payload: ApiErrorPayload,
   raw: string,
+  statusCode: number,
   fallback: string
 ): string => {
   const validationError = payload.errors
@@ -65,50 +96,36 @@ const extractApiError = (
     validationError ||
     payload.message ||
     payload.detail ||
-    (raw.trim() ? raw : fallback)
+    (raw.trim() ? raw : "") ||
+    (statusCode === 401 ? "unauthorized" : "") ||
+    (statusCode === 404 ? "resource not found" : "") ||
+    fallback
   );
 };
 
 const toFriendlyCompanyCreateError = (rawError: string): string => {
-  const normalized = rawError.trim().toLocaleLowerCase("tr-TR");
+  const normalized = normalizeText(rawError);
 
   if (!normalized) {
-    return "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+    return "Islem sirasinda bir hata olustu. Lutfen tekrar deneyin.";
   }
-  if (normalized.includes("failed to fetch") || normalized.includes("network error")) {
-    return "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+  if (normalized.includes("failed to fetch") || normalized.includes("network error") || normalized.includes("fetch")) {
+    return "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
   }
-  if (normalized.includes("emaili zaten kullanılıyor")) {
-    return "Bu e-posta adresi zaten kullanımda.";
+  if (normalized.includes("email") && normalized.includes("zaten") && normalized.includes("kullani")) {
+    return "Bu e-posta adresi zaten kullanimda.";
   }
-  if (normalized.includes("kayıt işlemi başarısız oldu")) {
-    return "Yönetici hesabı oluşturulamadı. Lütfen girdiğiniz bilgileri kontrol edip tekrar deneyin.";
+  if (normalized.includes("kayit islemi basarisiz") || normalized.includes("register")) {
+    return "Yonetici hesabi olusturulamadi. Lutfen girdileri kontrol edip tekrar deneyin.";
   }
-  if (normalized.includes("one or more validation errors occurred")) {
-    return "Gönderilen bilgilerde eksik veya hatalı alanlar var.";
+  if (normalized.includes("one or more validation errors occurred") || normalized.includes("validation")) {
+    return "Gonderilen bilgilerde eksik veya hatali alanlar var.";
   }
-  if (normalized.includes("şifre")) {
+  if (normalized.includes("sifre") || normalized.includes("password")) {
     return rawError;
   }
 
-  return "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.";
-};
-
-const getPasswordPolicyErrors = (passwordValue: string): string[] => {
-  const errors: string[] = [];
-  if (passwordValue.length < 8) {
-    errors.push("en az 8 karakter");
-  }
-  if (!/[A-Z]/.test(passwordValue)) {
-    errors.push("en az 1 büyük harf");
-  }
-  if (!/[a-z]/.test(passwordValue)) {
-    errors.push("en az 1 küçük harf");
-  }
-  if (!/[0-9]/.test(passwordValue)) {
-    errors.push("en az 1 rakam");
-  }
-  return errors;
+  return "Islem sirasinda bir hata olustu. Lutfen tekrar deneyin.";
 };
 
 type IconProps = { name: string; style?: CSSProperties };
@@ -152,34 +169,41 @@ const Blobs = ({ dark }: { dark: boolean }) => (
 export default function CompanyCreatePage() {
   const { payment } = useMemo(() => readQuery(), []);
   const [dark, setDark] = useState(true);
-  const [companyName, setCompanyName] = useState("");
-  const [adminName, setAdminName] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<CompanyCreateFormValues>({
+    resolver: zodResolver(companyCreateSchema),
+    defaultValues: {
+      companyName: "",
+      adminName: "",
+      adminEmail: "",
+      password: "",
+      confirmPassword: "",
+    },
+  });
 
   const isPaymentSuccess = payment === "success";
 
-  const handleCreate = async () => {
+  const handleCreate = async ({
+    companyName,
+    adminName,
+    adminEmail,
+    password,
+  }: CompanyCreateFormValues) => {
     if (isLoading) return;
-    if (!companyName.trim()) { setErrorMessage("Lütfen şirket adını girin."); return; }
-    if (!adminName.trim() || !adminEmail.trim() || !password) { setErrorMessage("Lütfen yönetici bilgilerini eksiksiz doldurun."); return; }
-    if (password !== confirmPassword) { setErrorMessage("Şifreler eşleşmiyor."); return; }
-    const passwordPolicyErrors = getPasswordPolicyErrors(password);
-    if (passwordPolicyErrors.length > 0) {
-      setErrorMessage(`Şifre kuralları sağlanmıyor: ${passwordPolicyErrors.join(", ")}.`);
-      return;
-    }
 
     setIsLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "İşlem sırasında bir hata oluştu.";
+    let lastError = "Islem sirasinda bir hata olustu.";
     let hasAnyNetworkError = false;
+    let hasAnyReachableResponse = false;
     const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
     const registerPath = "/api/Identity/RegisterCommandRequest";
 
@@ -191,19 +215,26 @@ export default function CompanyCreatePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ companyName: companyName.trim() }),
         });
+        hasAnyReachableResponse = true;
 
         const createRaw = await createResponse.text();
         const createPayload = parsePayload<CreateCompanyResponse>(createRaw);
 
         if (!createResponse.ok) {
-          const createError = extractApiError(createPayload, createRaw, lastError);
-          lastError = toFriendlyCompanyCreateError(createError);
+          const createError = extractApiError(createPayload, createRaw, createResponse.status, lastError);
+          const friendlyError = toFriendlyCompanyCreateError(createError);
+          if (createResponse.status < 500) {
+            setErrorMessage(friendlyError);
+            setIsLoading(false);
+            return;
+          }
+          lastError = friendlyError;
           continue;
         }
 
         const createdCompanyId = createPayload.companyId ?? createPayload.CompanyId ?? "";
         if (!guidRegex.test(createdCompanyId)) {
-          lastError = "Şirket oluşturuldu ancak işlem tamamlanamadı. Lütfen tekrar deneyin.";
+          lastError = "Sirket olusturuldu ancak islem tamamlanamadi. Lutfen tekrar deneyin.";
           continue;
         }
 
@@ -224,31 +255,34 @@ export default function CompanyCreatePage() {
         const registerPayload = parsePayload<ApiErrorPayload>(registerRaw);
 
         if (!registerResponse.ok) {
-          let registerError = extractApiError(registerPayload, registerRaw, "Yönetici hesabı oluşturulamadı.");
-          if (/Kayıt işlemi başarısız oldu/i.test(registerError)) {
-            registerError = "Şifre kuralları sağlanmıyor olabilir (en az 8 karakter, büyük harf, küçük harf ve rakam).";
-          }
-          setErrorMessage(`Şirket oluşturuldu ancak yönetici hesabı açılamadı: ${toFriendlyCompanyCreateError(registerError)}`);
+          const registerError = extractApiError(
+            registerPayload,
+            registerRaw,
+            registerResponse.status,
+            "Yonetici hesabi olusturulamadi."
+          );
+          setErrorMessage(`Sirket olusturuldu ancak yonetici hesabi acilamadi: ${toFriendlyCompanyCreateError(registerError)}`);
           setIsLoading(false);
           return;
         }
 
-        setSuccessMessage("Şirket ve yönetici başarıyla oluşturuldu. Giriş sayfasına yönlendiriliyorsunuz.");
+        setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Giris sayfasina yonlendiriliyorsunuz.");
         setTimeout(() => { window.location.href = "/"; }, 1200);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
-        if (error instanceof Error && error.message) {
-          lastError = toFriendlyCompanyCreateError(error.message);
-        } else {
-          lastError = "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+        if (!hasAnyReachableResponse) {
+          if (error instanceof Error && error.message) {
+            lastError = toFriendlyCompanyCreateError(error.message);
+          } else {
+            lastError = "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
+          }
         }
-        continue;
       }
     }
 
-    if (hasAnyNetworkError) {
-      setErrorMessage("Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.");
+    if (hasAnyNetworkError && !hasAnyReachableResponse) {
+      setErrorMessage("Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.");
       setIsLoading(false);
       return;
     }
@@ -257,7 +291,6 @@ export default function CompanyCreatePage() {
     setIsLoading(false);
   };
 
-  // ─── Tema değerleri ───────────────────────────────────────────────────────
   const bg = dark ? "#0a0f0e" : "#f0faf8";
   const cardBg = dark ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.85)";
   const cardBorder = dark ? "rgba(19,236,200,0.15)" : "rgba(19,236,200,0.3)";
@@ -316,6 +349,13 @@ export default function CompanyCreatePage() {
     letterSpacing: "0.01em",
   };
 
+  const fieldErrorStyle: CSSProperties = {
+    margin: "8px 2px 0",
+    fontSize: "12px",
+    color: "#fca5a5",
+    lineHeight: 1.4,
+  };
+
   return (
     <>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
@@ -366,7 +406,6 @@ export default function CompanyCreatePage() {
         .tf-toggle:hover { opacity: 0.85; }
       `}</style>
 
-      {/* Dark mode toggle */}
       <button
         className="tf-toggle"
         onClick={() => setDark(!dark)}
@@ -387,8 +426,6 @@ export default function CompanyCreatePage() {
         <Blobs dark={dark} />
 
         <div className="tf-card" style={cardStyle}>
-
-          {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "36px" }}>
             <img
               src="https://www.logoai.com/uploads/icon/2021/08/06/732ca933-7df8-43e8-b085-69466243c919.png"
@@ -400,7 +437,6 @@ export default function CompanyCreatePage() {
             </span>
           </div>
 
-          {/* Heading */}
           <div style={{ marginBottom: "32px" }}>
             <h1 style={{
               margin: "0 0 6px",
@@ -412,11 +448,10 @@ export default function CompanyCreatePage() {
               lineHeight: 1.1,
               transition: "color 0.3s",
             }}>
-              Şirketini oluştur.
+              Sirketini olustur.
             </h1>
           </div>
 
-          {/* Ödeme uyarısı */}
           {!isPaymentSuccess && (
             <div style={{
               display: "flex", gap: "10px",
@@ -430,99 +465,135 @@ export default function CompanyCreatePage() {
                 <circle cx="8" cy="11.5" r=".75" fill="#fbbf24" />
               </svg>
               <p style={{ fontSize: "13px", color: "rgba(251,191,36,0.8)", margin: 0, lineHeight: 1.5 }}>
-                Bu sayfa normalde ödeme başarısından sonra açılır.
+                Bu sayfa normalde odeme basarisindan sonra acilir.
               </p>
             </div>
           )}
 
-          {/* Şirket */}
-          <p style={{
-            fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-            color: sectionLabelColor, margin: "0 0 14px",
-            display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
-          }}>
-            Şirket Bilgileri
-            <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
-          </p>
-          <div style={{ display: "grid", gap: "14px", marginBottom: "28px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                Şirket adı
-              </label>
-              <input className={inputFocusClass} type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Örnek: TaskFlow Labs" style={inputStyle} />
-            </div>
-          </div>
-
-          {/* Yönetici */}
-          <p style={{
-            fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-            color: sectionLabelColor, margin: "0 0 14px",
-            display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
-          }}>
-            Yönetici Bilgileri
-            <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
-          </p>
-          <div style={{ display: "grid", gap: "14px", marginBottom: "32px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                Ad soyad
-              </label>
-              <input className={inputFocusClass} type="text" value={adminName} onChange={(e) => setAdminName(e.target.value)} placeholder="Örnek: Emre Uçbudak" style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                E-posta
-              </label>
-              <input className={inputFocusClass} type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="ornek@mail.com" style={inputStyle} />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                  Şifre
-                </label>
-                <input className={inputFocusClass} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                  Şifre tekrar
-                </label>
-                <input className={inputFocusClass} type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
-              </div>
-            </div>
-          </div>
-
-          {/* Buton */}
-          <button
-            type="button"
-            className="tf-btn"
-            onClick={() => void handleCreate()}
-            disabled={isLoading}
-            style={{
-              background: isLoading
-                ? dark ? "rgba(255,255,255,0.06)" : "rgba(13,27,25,0.08)"
-                : "linear-gradient(135deg, #13ecc8 0%, #0ab89f 100%)",
-              color: isLoading
-                ? dark ? "rgba(255,255,255,0.3)" : "rgba(13,27,25,0.3)"
-                : "#0a0f0e",
-            }}
+          <form
+            onSubmit={handleSubmit((values) => {
+              void handleCreate(values);
+            })}
           >
-            {isLoading ? (
-              <>
-                <span style={{
-                  width: "16px", height: "16px", borderRadius: "50%",
-                  border: "2px solid rgba(255,255,255,0.15)",
-                  borderTopColor: "rgba(255,255,255,0.5)",
-                  animation: "spin 0.7s linear infinite",
-                  display: "inline-block",
-                }} />
-                Oluşturuluyor…
-              </>
-            ) : (
-              "Hesabı Oluştur →"
-            )}
-          </button>
+            <p style={{
+              fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+              color: sectionLabelColor, margin: "0 0 14px",
+              display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
+            }}>
+              Sirket Bilgileri
+              <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
+            </p>
+            <div style={{ display: "grid", gap: "14px", marginBottom: "28px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                  Sirket adi
+                </label>
+                <input
+                  className={inputFocusClass}
+                  type="text"
+                  placeholder="Ornek: TaskFlow Labs"
+                  style={inputStyle}
+                  {...register("companyName")}
+                />
+                {errors.companyName?.message && <p style={fieldErrorStyle}>{errors.companyName.message}</p>}
+              </div>
+            </div>
 
-          {/* Hata */}
+            <p style={{
+              fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+              color: sectionLabelColor, margin: "0 0 14px",
+              display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
+            }}>
+              Yonetici Bilgileri
+              <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
+            </p>
+            <div style={{ display: "grid", gap: "14px", marginBottom: "32px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                  Ad soyad
+                </label>
+                <input
+                  className={inputFocusClass}
+                  type="text"
+                  placeholder="Ornek: Emre Ucbudak"
+                  style={inputStyle}
+                  {...register("adminName")}
+                />
+                {errors.adminName?.message && <p style={fieldErrorStyle}>{errors.adminName.message}</p>}
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                  E-posta
+                </label>
+                <input
+                  className={inputFocusClass}
+                  type="email"
+                  placeholder="ornek@mail.com"
+                  style={inputStyle}
+                  {...register("adminEmail")}
+                />
+                {errors.adminEmail?.message && <p style={fieldErrorStyle}>{errors.adminEmail.message}</p>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                    Sifre
+                  </label>
+                  <input
+                    className={inputFocusClass}
+                    type="password"
+                    placeholder="********"
+                    style={inputStyle}
+                    {...register("password")}
+                  />
+                  {errors.password?.message && <p style={fieldErrorStyle}>{errors.password.message}</p>}
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                    Sifre tekrar
+                  </label>
+                  <input
+                    className={inputFocusClass}
+                    type="password"
+                    placeholder="********"
+                    style={inputStyle}
+                    {...register("confirmPassword")}
+                  />
+                  {errors.confirmPassword?.message && <p style={fieldErrorStyle}>{errors.confirmPassword.message}</p>}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="tf-btn"
+              disabled={isLoading}
+              style={{
+                background: isLoading
+                  ? dark ? "rgba(255,255,255,0.06)" : "rgba(13,27,25,0.08)"
+                  : "linear-gradient(135deg, #13ecc8 0%, #0ab89f 100%)",
+                color: isLoading
+                  ? dark ? "rgba(255,255,255,0.3)" : "rgba(13,27,25,0.3)"
+                  : "#0a0f0e",
+              }}
+            >
+              {isLoading ? (
+                <>
+                  <span style={{
+                    width: "16px", height: "16px", borderRadius: "50%",
+                    border: "2px solid rgba(255,255,255,0.15)",
+                    borderTopColor: "rgba(255,255,255,0.5)",
+                    animation: "spin 0.7s linear infinite",
+                    display: "inline-block",
+                  }} />
+                  Olusturuluyor...
+                </>
+              ) : (
+                "Hesabi Olustur ->"
+              )}
+            </button>
+          </form>
+
           {errorMessage && (
             <div style={{
               display: "flex", gap: "10px",
@@ -538,7 +609,6 @@ export default function CompanyCreatePage() {
             </div>
           )}
 
-          {/* Başarı */}
           {successMessage && (
             <div style={{
               display: "flex", gap: "10px",

@@ -1,4 +1,7 @@
+﻿import { zodResolver } from "@hookform/resolvers/zod";
 import { useState, type CSSProperties } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
 
 type LoginResponse = {
   accessToken?: string;
@@ -11,11 +14,25 @@ type LoginResponse = {
   errors?: Record<string, string[]>;
 };
 
+const loginSchema = z.object({
+  email: z.string().trim().min(1, "E-posta zorunludur.").email("Gecerli bir e-posta girin."),
+  password: z.string().min(1, "Sifre zorunludur."),
+});
+
+type LoginFormValues = z.infer<typeof loginSchema>;
+
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
+
+const normalizeText = (value: string) =>
+  value
+    .trim()
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
-  return [envBaseUrl, "http://localhost:5172", "https://localhost:7243", "http://localhost:8080", "https://localhost:8081"]
+  return [envBaseUrl, "http://localhost:8080", "http://localhost:5172", "https://localhost:7243", "https://localhost:8081"]
     .map((url) => normalizeBaseUrl(url))
     .filter((url, index, arr) => Boolean(url) && arr.indexOf(url) === index);
 };
@@ -25,30 +42,61 @@ const getToken = (payload: LoginResponse, type: "access" | "refresh") =>
     ? payload.accessToken ?? payload.AccessToken ?? ""
     : payload.refreshToken ?? payload.RefreshToken ?? "";
 
+const parsePayload = <T extends object>(raw: string): T => {
+  try {
+    return raw ? (JSON.parse(raw) as T) : ({} as T);
+  } catch {
+    return {} as T;
+  }
+};
+
+const extractApiError = (payload: LoginResponse, raw: string, statusCode: number): string => {
+  const validationError = payload.errors
+    ? Object.values(payload.errors).flat().find(Boolean)
+    : "";
+  if (validationError) return validationError;
+  if (payload.message) return payload.message;
+  if (payload.detail) return payload.detail;
+  if (payload.title) return payload.title;
+  if (raw.trim()) return raw;
+  if (statusCode === 401) return "unauthorized";
+  if (statusCode === 404) return "user not found";
+  return "";
+};
+
 const toFriendlyLoginError = (rawError: string): string => {
-  const normalized = rawError.trim().toLocaleLowerCase("tr-TR");
+  const normalized = normalizeText(rawError);
 
   if (!normalized) {
-    return "Giriş sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+    return "Giris sirasinda bir hata olustu. Lutfen tekrar deneyin.";
   }
-  if (normalized.includes("şifre yanlış") || normalized.includes("wrong password")) {
-    return "E-posta veya şifre hatalı.";
+  if (
+    normalized.includes("sifre yanlis") ||
+    normalized.includes("wrong password") ||
+    normalized.includes("password")
+  ) {
+    return "E-posta veya sifre hatali.";
   }
-  if (normalized.includes("kullanıcı bulunamadı") || normalized.includes("user not found")) {
-    return "Bu e-posta ile kayıtlı bir hesap bulunamadı.";
+  if (
+    normalized.includes("kullanici bulunamadi") ||
+    normalized.includes("user not found") ||
+    normalized.includes("resource not found")
+  ) {
+    return "Bu e-posta ile kayitli bir hesap bulunamadi.";
   }
   if (normalized.includes("authentication error") || normalized.includes("unauthorized")) {
-    return "Giriş yapılamadı. Bilgilerinizi kontrol edip tekrar deneyin.";
+    return "Giris yapilamadi. Bilgilerinizi kontrol edip tekrar deneyin.";
   }
   if (
     normalized.includes("failed to fetch") ||
     normalized.includes("network error") ||
-    normalized.includes("api'ye erisilemedi")
+    normalized.includes("api'ye erisilemedi") ||
+    normalized.includes("fetch")
   ) {
-    return "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+    return "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
   }
 
-  return "Giriş sırasında bir hata oluştu. Lütfen tekrar deneyin.";
+  return "Giris sirasinda bir hata olustu. Lutfen tekrar deneyin.";
 };
 
 type IconProps = { name: string; style?: CSSProperties };
@@ -91,26 +139,31 @@ const Blobs = ({ dark }: { dark: boolean }) => (
 
 export default function LoginPage() {
   const [dark, setDark] = useState(true);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<LoginFormValues>({
+    resolver: zodResolver(loginSchema),
+    defaultValues: {
+      email: "",
+      password: "",
+    },
+  });
 
-  const handleLogin = async () => {
+  const handleLogin = async ({ email, password }: LoginFormValues) => {
     if (isLoading) return;
-
-    if (!email.trim() || !password) {
-      setErrorMessage("E-posta ve şifre alanlarını doldurun.");
-      return;
-    }
 
     setIsLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "Giriş sırasında bir hata oluştu.";
+    let lastError = "Giris sirasinda bir hata olustu. Lutfen tekrar deneyin.";
     let hasAnyNetworkError = false;
+    let hasAnyReachableResponse = false;
 
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
@@ -119,18 +172,19 @@ export default function LoginPage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ email: email.trim(), password }),
         });
+        hasAnyReachableResponse = true;
 
-        let payload: LoginResponse = {};
-        try {
-          payload = (await response.json()) as LoginResponse;
-        } catch {
-          payload = {};
-        }
+        const raw = await response.text();
+        const payload = parsePayload<LoginResponse>(raw);
 
         if (!response.ok) {
-          const firstError = payload.errors ? Object.values(payload.errors).flat()[0] : "";
-          const apiError = firstError || payload.message || payload.detail || payload.title || "";
-          lastError = toFriendlyLoginError(apiError);
+          const friendlyError = toFriendlyLoginError(extractApiError(payload, raw, response.status));
+          if (response.status < 500) {
+            setErrorMessage(friendlyError);
+            setIsLoading(false);
+            return;
+          }
+          lastError = friendlyError;
           continue;
         }
 
@@ -138,7 +192,7 @@ export default function LoginPage() {
         const refreshToken = getToken(payload, "refresh");
 
         if (!accessToken || !refreshToken) {
-          lastError = "Giriş tamamlanamadı. Lütfen tekrar deneyin.";
+          lastError = "Giris tamamlanamadi. Lutfen tekrar deneyin.";
           continue;
         }
 
@@ -149,17 +203,18 @@ export default function LoginPage() {
         return;
       } catch (error) {
         hasAnyNetworkError = true;
-        if (error instanceof Error && error.message) {
-          lastError = toFriendlyLoginError(error.message);
-        } else {
-          lastError = "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+        if (!hasAnyReachableResponse) {
+          if (error instanceof Error && error.message) {
+            lastError = toFriendlyLoginError(error.message);
+          } else {
+            lastError = "Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.";
+          }
         }
-        continue;
       }
     }
 
-    if (hasAnyNetworkError) {
-      setErrorMessage("Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.");
+    if (hasAnyNetworkError && !hasAnyReachableResponse) {
+      setErrorMessage("Sunucuya su anda ulasilamiyor. Lutfen birazdan tekrar deneyin.");
       setIsLoading(false);
       return;
     }
@@ -168,7 +223,6 @@ export default function LoginPage() {
     setIsLoading(false);
   };
 
-  // ─── Tema değerleri ───────────────────────────────────────────────────────
   const bg = dark ? "#0a0f0e" : "#f0faf8";
   const cardBg = dark ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.85)";
   const cardBorder = dark ? "rgba(19,236,200,0.15)" : "rgba(19,236,200,0.3)";
@@ -223,6 +277,13 @@ export default function LoginPage() {
     transition: "border-color 0.2s, background 0.2s",
   };
 
+  const fieldErrorStyle: CSSProperties = {
+    margin: "8px 2px 0",
+    fontSize: "12px",
+    color: "#fca5a5",
+    lineHeight: 1.4,
+  };
+
   return (
     <>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
@@ -255,7 +316,6 @@ export default function LoginPage() {
         .tf-toggle { transition: background 0.2s, color 0.2s; }
       `}</style>
 
-      {/* Dark mode toggle */}
       <button
         className="tf-toggle"
         onClick={() => setDark(!dark)}
@@ -276,8 +336,6 @@ export default function LoginPage() {
         <Blobs dark={dark} />
 
         <div className="tf-card" style={cardStyle}>
-
-          {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "36px" }}>
             <img
               src="https://www.logoai.com/uploads/icon/2021/08/06/732ca933-7df8-43e8-b085-69466243c919.png"
@@ -289,7 +347,6 @@ export default function LoginPage() {
             </span>
           </div>
 
-          {/* Heading */}
           <div style={{ marginBottom: "32px" }}>
             <h1 style={{
               margin: "0 0 6px",
@@ -301,20 +358,18 @@ export default function LoginPage() {
               lineHeight: 1.1,
               transition: "color 0.3s",
             }}>
-              Hoş geldin.
+              Hos geldin.
             </h1>
             <p style={{ margin: 0, fontSize: "13px", color: subColor, lineHeight: 1.5, transition: "color 0.3s" }}>
-              Devam etmek için hesabına giriş yap.
+              Devam etmek icin hesabina giris yap.
             </p>
           </div>
 
-          {/* Form */}
           <form
             style={{ display: "grid", gap: "16px" }}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleLogin();
-            }}
+            onSubmit={handleSubmit((values) => {
+              void handleLogin(values);
+            })}
           >
             <div>
               <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
@@ -323,27 +378,27 @@ export default function LoginPage() {
               <input
                 className={dark ? "tf-input-dark" : "tf-input-light"}
                 type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
                 placeholder="ornek@sirket.com"
                 style={inputStyle}
                 autoComplete="email"
+                {...register("email")}
               />
+              {errors.email?.message && <p style={fieldErrorStyle}>{errors.email.message}</p>}
             </div>
 
             <div>
               <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                Şifre
+                Sifre
               </label>
               <input
                 className={dark ? "tf-input-dark" : "tf-input-light"}
                 type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder="********"
                 style={inputStyle}
                 autoComplete="current-password"
+                {...register("password")}
               />
+              {errors.password?.message && <p style={fieldErrorStyle}>{errors.password.message}</p>}
             </div>
 
             <button
@@ -381,15 +436,14 @@ export default function LoginPage() {
                     animation: "spin 0.7s linear infinite",
                     display: "inline-block",
                   }} />
-                  Giriş Yapılıyor…
+                  Giris Yapiliyor...
                 </>
               ) : (
-                "Giriş Yap →"
+                "Giris Yap ->"
               )}
             </button>
           </form>
 
-          {/* Hata */}
           {errorMessage && (
             <div style={{
               marginTop: "20px", padding: "12px 14px", borderRadius: "10px",
@@ -400,7 +454,6 @@ export default function LoginPage() {
             </div>
           )}
 
-          {/* Başarı */}
           {successMessage && (
             <div style={{
               marginTop: "20px", padding: "12px 14px", borderRadius: "10px",
