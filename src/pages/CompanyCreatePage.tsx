@@ -1,5 +1,5 @@
 ﻿import { zodResolver } from "@hookform/resolvers/zod";
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 
@@ -17,6 +17,11 @@ type CreateCompanyResponse = {
   message?: string;
   detail?: string;
   errors?: Record<string, string[]>;
+};
+
+type ApiCompanyPlan = {
+  planName: string;
+  planPrice: number;
 };
 
 const companyCreateSchema = z
@@ -45,7 +50,46 @@ const guidRegex =
 const readQuery = () => {
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
-  return { payment: params.get("payment") ?? "" };
+  return {
+    payment: params.get("payment") ?? "",
+    plan: params.get("plan") ?? "",
+    slug: params.get("slug") ?? "",
+  };
+};
+
+const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
+
+type PendingPlanSelection = {
+  planName: string;
+  planSlug: string;
+  createdAt?: number;
+};
+
+const readPendingPlanSelection = (): PendingPlanSelection | null => {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(pendingPlanStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingPlanSelection>;
+    if (typeof parsed.planName !== "string" || typeof parsed.planSlug !== "string") return null;
+    return {
+      planName: parsed.planName,
+      planSlug: parsed.planSlug,
+      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const clearPendingPlanSelection = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(pendingPlanStorageKey);
+  } catch {
+    // localStorage read/write might be blocked
+  }
 };
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
@@ -56,6 +100,22 @@ const normalizeText = (value: string) =>
     .toLocaleLowerCase("tr-TR")
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
+
+const normalizePlanText = (value: string) =>
+  value
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const getPlanSlug = (planName: string) => {
+  const normalized = normalizePlanText(planName);
+  if (/(start|startup|baslangic)/.test(normalized)) return "startup";
+  if (/(business|profesyonel)/.test(normalized)) return "business";
+  if (/(enterprise|kurumsal)/.test(normalized)) return "enterprise";
+  return normalized.replace(/\s+/g, "-");
+};
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl =
@@ -74,6 +134,51 @@ const getApiBaseUrlCandidates = (): string[] => {
 
 const buildApiUrl = (baseUrl: string, endpointPath: string) =>
   baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
+
+const buildPlansUrl = (baseUrl: string) =>
+  `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
+
+const toRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+const parseApiPlans = (payload: unknown): ApiCompanyPlan[] => {
+  const payloadRecord = toRecord(payload);
+  const dataRecord = toRecord(payloadRecord.data);
+  const itemsRecord = toRecord(payloadRecord.items);
+  const resultRecord = toRecord(payloadRecord.result);
+  const valueRecord = toRecord(payloadRecord.value);
+  const rawArray =
+    Array.isArray(payload) ? payload :
+      Array.isArray(payloadRecord.$values) ? payloadRecord.$values :
+        Array.isArray(payloadRecord.data) ? payloadRecord.data :
+          Array.isArray(dataRecord.$values) ? dataRecord.$values :
+            Array.isArray(payloadRecord.items) ? payloadRecord.items :
+              Array.isArray(itemsRecord.$values) ? itemsRecord.$values :
+                Array.isArray(payloadRecord.result) ? payloadRecord.result :
+                  Array.isArray(resultRecord.$values) ? resultRecord.$values :
+                    Array.isArray(payloadRecord.value) ? payloadRecord.value :
+                      Array.isArray(valueRecord.$values) ? valueRecord.$values :
+                        [];
+
+  return rawArray
+    .map((item) => {
+      const raw = toRecord(item);
+      const planNameValue = raw.planName ?? raw.PlanName ?? raw.name ?? raw.Name;
+      const planName = typeof planNameValue === "string" ? planNameValue : undefined;
+      const planPrice = Number(raw.planPrice ?? raw.PlanPrice ?? raw.price ?? raw.Price);
+      if (!planName || Number.isNaN(planPrice)) return null;
+      return { planName, planPrice };
+    })
+    .filter((plan): plan is ApiCompanyPlan => plan !== null)
+    .sort((a, b) => a.planPrice - b.planPrice);
+};
+
+const formatPlanPrice = (price: number) =>
+  new Intl.NumberFormat("tr-TR", {
+    style: "currency",
+    currency: "TRY",
+    maximumFractionDigits: 0,
+  }).format(price);
 
 const parsePayload = <T extends object>(raw: string): T => {
   try {
@@ -167,11 +272,15 @@ const Blobs = ({ dark }: { dark: boolean }) => (
 );
 
 export default function CompanyCreatePage() {
-  const { payment } = useMemo(() => readQuery(), []);
+  const { payment, plan, slug } = useMemo(() => readQuery(), []);
+  const pendingPlan = useMemo(() => readPendingPlanSelection(), []);
   const [dark, setDark] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [availablePlans, setAvailablePlans] = useState<ApiCompanyPlan[]>([]);
+  const [selectedPlanName, setSelectedPlanName] = useState("");
+  const [isPlansLoading, setIsPlansLoading] = useState(false);
   const {
     register,
     handleSubmit,
@@ -188,6 +297,41 @@ export default function CompanyCreatePage() {
   });
 
   const isPaymentSuccess = payment === "success";
+  const resolvedPlan = isPaymentSuccess ? plan.trim() || pendingPlan?.planName?.trim() || "" : plan.trim();
+  const resolvedSlug = isPaymentSuccess ? slug.trim() || pendingPlan?.planSlug?.trim() || "" : slug.trim();
+  const effectivePlan = resolvedPlan || selectedPlanName.trim();
+  const effectiveSlug = resolvedSlug || (selectedPlanName.trim() ? getPlanSlug(selectedPlanName.trim()) : "");
+
+  useEffect(() => {
+    if (!isPaymentSuccess || resolvedPlan || resolvedSlug) return;
+
+    let isMounted = true;
+    const fetchPlans = async () => {
+      setIsPlansLoading(true);
+      try {
+        for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+          try {
+            const response = await fetch(buildPlansUrl(apiBaseUrl), { cache: "no-store" });
+            if (!response.ok) continue;
+            const payload: unknown = await response.json();
+            const plans = parseApiPlans(payload);
+            if (plans.length === 0) continue;
+            if (isMounted) setAvailablePlans(plans);
+            return;
+          } catch {
+            continue;
+          }
+        }
+      } finally {
+        if (isMounted) setIsPlansLoading(false);
+      }
+    };
+
+    void fetchPlans();
+    return () => {
+      isMounted = false;
+    };
+  }, [isPaymentSuccess, resolvedPlan, resolvedSlug]);
 
   const handleCreate = async ({
     companyName,
@@ -206,6 +350,13 @@ export default function CompanyCreatePage() {
     let hasAnyReachableResponse = false;
     const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
     const registerPath = "/api/Identity/RegisterCommandRequest";
+    const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
+
+    if (isPaymentSuccess && !effectivePlan && !effectiveSlug) {
+      setErrorMessage("Odeme basarili gorunuyor ancak plan bilgisi bulunamadi. Lutfen odeme adimini tekrar deneyin.");
+      setIsLoading(false);
+      return;
+    }
 
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
@@ -264,6 +415,40 @@ export default function CompanyCreatePage() {
           setErrorMessage(`Sirket olusturuldu ancak yonetici hesabi acilamadi: ${toFriendlyCompanyCreateError(registerError)}`);
           setIsLoading(false);
           return;
+        }
+
+        if (isPaymentSuccess) {
+          const activateUrl = buildApiUrl(apiBaseUrl, activateSubscriptionPath);
+          const activateResponse = await fetch(activateUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              companyId: createdCompanyId,
+              planName: effectivePlan || undefined,
+              planSlug: effectiveSlug || undefined,
+            }),
+          });
+
+          const activateRaw = await activateResponse.text();
+          const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
+
+          if (!activateResponse.ok) {
+            const activateError = extractApiError(
+              activatePayload,
+              activateRaw,
+              activateResponse.status,
+              "Abonelik aktif edilemedi."
+            );
+            setErrorMessage(
+              `Sirket ve yonetici olusturuldu ancak abonelik aktif edilemedi: ${toFriendlyCompanyCreateError(activateError)}`
+            );
+            setIsLoading(false);
+            return;
+          }
+        }
+
+        if (isPaymentSuccess) {
+          clearPendingPlanSelection();
         }
 
         setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Giris sayfasina yonlendiriliyorsunuz.");
@@ -467,6 +652,38 @@ export default function CompanyCreatePage() {
               <p style={{ fontSize: "13px", color: "rgba(251,191,36,0.8)", margin: 0, lineHeight: 1.5 }}>
                 Bu sayfa normalde odeme basarisindan sonra acilir.
               </p>
+            </div>
+          )}
+
+          {isPaymentSuccess && !resolvedPlan && !resolvedSlug && (
+            <div
+              style={{
+                background: dark ? "rgba(19,236,200,0.08)" : "rgba(13,140,110,0.08)",
+                border: dark ? "1px solid rgba(19,236,200,0.2)" : "1px solid rgba(13,140,110,0.2)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                marginBottom: "18px",
+              }}
+            >
+              <p style={{ margin: "0 0 10px", fontSize: "13px", lineHeight: 1.5, color: dark ? "#b7f7ea" : "#0d1b19" }}>
+                Odeme tamamlandi ancak plan bilgisi donmedi. Lutfen planinizi secin.
+              </p>
+              <select
+                className={inputFocusClass}
+                value={selectedPlanName}
+                disabled={isPlansLoading}
+                onChange={(event) => {
+                  setSelectedPlanName(event.target.value);
+                }}
+                style={{ ...inputStyle, appearance: "none", backgroundImage: "none" }}
+              >
+                <option value="">{isPlansLoading ? "Planlar yukleniyor..." : "Plan secin"}</option>
+                {availablePlans.map((item) => (
+                  <option key={item.planName} value={item.planName}>
+                    {item.planName} - {item.planPrice <= 0 ? "Ucretsiz" : `${formatPlanPrice(item.planPrice)}/ay`}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
 
