@@ -50,6 +50,50 @@ type StripeCheckoutSessionResponse = {
   detail?: string;
 };
 
+const PLAN_SELECT_CTA = "Plan Se\u00E7";
+
+const fixMojibakeText = (value: string) => {
+  const replacements: Array<[string, string]> = [
+    ["Ã§", "ç"],
+    ["Ã‡", "Ç"],
+    ["Ã¶", "ö"],
+    ["Ã–", "Ö"],
+    ["Ã¼", "ü"],
+    ["Ãœ", "Ü"],
+    ["Ä±", "ı"],
+    ["Ä°", "İ"],
+    ["ÄŸ", "ğ"],
+    ["Äž", "Ğ"],
+    ["ÅŸ", "ş"],
+    ["Åž", "Ş"],
+    ["â‚º", "₺"],
+    ["kullan�c�", "kullanıcı"],
+    ["tak�m", "takım"],
+    ["g�rev", "görev"],
+    ["�� raporlama", "İç raporlama"],
+    ["i� raporlama", "iç raporlama"],
+    ["B�y�yen", "Büyüyen"],
+    ["ba�layan", "başlayan"],
+    ["k���k", "küçük"],
+    ["B�y�k", "Büyük"],
+    ["kurulu�lar", "kuruluşlar"],
+    ["�zelle�tirilmi�", "özelleştirilmiş"],
+    ["s�re�lerinizi", "süreçlerinizi"],
+    ["i�in", "için"],
+    ["Y�ksek", "Yüksek"],
+    ["�l�ekli", "ölçekli"],
+    ["�irketler", "şirketler"],
+    ["kapsaml�", "kapsamlı"],
+    ["��z�m", "çözüm"],
+  ];
+
+  let normalized = value;
+  for (const [wrong, correct] of replacements) {
+    normalized = normalized.replaceAll(wrong, correct);
+  }
+  return normalized;
+};
+
 const fallbackPricingPlans: PricingPlanCard[] = [
   {
     name: "Start-up",
@@ -58,7 +102,7 @@ const fallbackPricingPlans: PricingPlanCard[] = [
     period: "/ay",
     description: "Yeni başlayan küçük ekipler için ideal.",
     features: ["5 kullanıcıya kadar", "1 takım limiti", "100 bireysel görev limiti", "İç raporlama dahil"],
-    cta: "Plan Seç",
+    cta: PLAN_SELECT_CTA,
     popular: false,
   },
   {
@@ -68,7 +112,7 @@ const fallbackPricingPlans: PricingPlanCard[] = [
     period: "/ay",
     description: "Daha fazla güce ihtiyaç duyan büyüyen ekipler için.",
     features: ["25 kullanıcıya kadar", "5 takım limiti", "1000 bireysel görev limiti", "İç raporlama dahil"],
-    cta: "Plan Seç",
+    cta: PLAN_SELECT_CTA,
     popular: true,
   },
   {
@@ -78,7 +122,7 @@ const fallbackPricingPlans: PricingPlanCard[] = [
     period: "/ay",
     description: "Büyük kuruluşlar için özelleştirilmiş çözümler.",
     features: ["1000 kullanıcıya kadar", "50 takım limiti", "10000 bireysel görev limiti", "İç raporlama dahil"],
-    cta: "Plan Seç",
+    cta: PLAN_SELECT_CTA,
     popular: false,
   },
 ];
@@ -108,7 +152,7 @@ const toPricingPlan = (plan: ApiCompanyPlan, index: number): PricingPlanCard => 
     `${plan.planProperties.individualTaskLimit} bireysel görev limiti`,
     plan.planProperties.isInternalReportingEnabled ? "İç raporlama dahil" : "İç raporlama yok",
   ],
-  cta: "Plan Seç",
+  cta: PLAN_SELECT_CTA,
   popular: false,
 });
 
@@ -732,18 +776,20 @@ export default function TaskFlowLanding() {
                     <div style={{ position: "absolute", top: 0, right: 0, background: "#13ecc8", color: "#0d1b19", fontSize: "11px", fontWeight: 700, padding: "4px 12px", borderBottomLeftRadius: "12px" }}>POPÜLER</div>
                   )}
                   <div style={{ marginBottom: "24px" }}>
-                    <h3 style={{ fontWeight: 700, fontSize: "17px", color: plan.popular ? "#fff" : text, margin: "0 0 12px" }}>{plan.name}</h3>
+                    <h3 style={{ fontWeight: 700, fontSize: "17px", color: plan.popular ? "#fff" : text, margin: "0 0 12px" }}>{fixMojibakeText(plan.name)}</h3>
                     <div style={{ display: "flex", alignItems: "baseline", gap: "4px" }}>
-                      <span style={{ fontSize: "2.4rem", fontWeight: 900, color: plan.popular ? "#fff" : text }}>{plan.price}</span>
-                      {plan.period && <span style={{ color: "#9ca3af" }}>{plan.period}</span>}
+                      <span style={{ fontSize: "2.4rem", fontWeight: 900, color: plan.popular ? "#fff" : text }}>{fixMojibakeText(plan.price)}</span>
+                      {plan.period && <span style={{ color: "#9ca3af" }}>{fixMojibakeText(plan.period)}</span>}
                     </div>
-                    <p style={{ color: plan.popular ? "#d1d5db" : subText, fontSize: "13px", margin: "8px 0 0" }}>{plan.description}</p>
+                    <p style={{ color: plan.popular ? "#d1d5db" : subText, fontSize: "13px", margin: "8px 0 0" }}>{fixMojibakeText(plan.description)}</p>
                   </div>
                   <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "12px", marginBottom: "24px" }}>
                     {plan.features.map(feat => (
                       <div key={feat} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <Icon name={plan.popular ? "check_circle" : "check"} style={{ color: "#13ecc8", fontSize: "20px" }} />
-                        <span style={{ fontSize: "14px", color: plan.popular ? "#fff" : text }}>{feat}</span>
+                        <span style={{ color: "#13ecc8", fontSize: "20px", lineHeight: 1, fontWeight: 700 }} aria-hidden>
+                          ✓
+                        </span>
+                        <span style={{ fontSize: "14px", color: plan.popular ? "#fff" : text }}>{fixMojibakeText(feat)}</span>
                       </div>
                     ))}
                   </div>
@@ -756,7 +802,7 @@ export default function TaskFlowLanding() {
                     boxShadow: plan.popular ? "0 4px 16px rgba(19,236,200,.25)" : "none",
                     opacity: isCheckoutLoading && loadingPlanName !== plan.name ? 0.6 : 1,
                   }}>
-                    {plan.cta}
+                    {fixMojibakeText(plan.cta)}
                   </button>
                 </div>
               ))}

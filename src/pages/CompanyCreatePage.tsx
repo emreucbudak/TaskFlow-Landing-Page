@@ -660,8 +660,8 @@ export default function CompanyCreatePage() {
         }
 
         clearPendingPlanSelection();
-        setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Ana sayfaya yonlendiriliyorsunuz.");
-        setTimeout(() => { window.location.href = "/"; }, 1200);
+        setSuccessMessage("Kayit basarili.");
+        setIsLoading(false);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
