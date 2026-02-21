@@ -634,7 +634,6 @@ export default function TaskFlowLanding() {
               </div>
               <span style={{ fontWeight: 800, fontSize: "18px" }}>TaskFlow</span>
             </div>
-            <a href="/auth/login" style={{ color: "#13ecc8", fontWeight: 700, fontSize: "14px", textDecoration: "none" }}>Giriş Yap</a>
           </div>
         </nav>
 
@@ -816,3 +815,4 @@ export default function TaskFlowLanding() {
     </>
   );
 }
+

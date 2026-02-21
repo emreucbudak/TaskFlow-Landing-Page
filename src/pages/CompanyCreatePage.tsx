@@ -1,4 +1,4 @@
-﻿import { zodResolver } from "@hookform/resolvers/zod";
+import { zodResolver } from "@hookform/resolvers/zod";
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
@@ -660,8 +660,8 @@ export default function CompanyCreatePage() {
         }
 
         clearPendingPlanSelection();
-        setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Giris sayfasina yonlendiriliyorsunuz.");
-        setTimeout(() => { window.location.href = "/auth/login"; }, 1200);
+        setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Ana sayfaya yonlendiriliyorsunuz.");
+        setTimeout(() => { window.location.href = "/"; }, 1200);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
@@ -1097,4 +1097,5 @@ export default function CompanyCreatePage() {
     </>
   );
 }
+
 
