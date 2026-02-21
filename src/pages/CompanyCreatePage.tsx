@@ -16,6 +16,14 @@ type CreateCompanyResponse = {
   errors?: Record<string, string[]>;
 };
 
+type StripeCheckoutSessionResponse = {
+  checkoutUrl?: string;
+  CheckoutUrl?: string;
+  message?: string;
+  detail?: string;
+  errors?: Record<string, string[]>;
+};
+
 type ApiCompanyPlan = {
   planName: string;
   planPrice: number;
@@ -51,6 +59,7 @@ const readQuery = () => {
     payment: params.get("payment") ?? "",
     plan: params.get("plan") ?? "",
     slug: params.get("slug") ?? "",
+    companyId: params.get("companyId") ?? "",
   };
 };
 
@@ -209,7 +218,7 @@ const Blobs = ({ dark }: { dark: boolean }) => (
 );
 
 export default function CompanyCreatePage() {
-  const { payment, plan, slug } = useMemo(() => readQuery(), []);
+  const { payment, plan, slug, companyId } = useMemo(() => readQuery(), []);
   const pendingPlan = useMemo(() => readPendingPlanSelection(), []);
   const [dark, setDark] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -233,15 +242,17 @@ export default function CompanyCreatePage() {
     },
   });
 
+  const paymentCompanyId = companyId.trim();
   const isPaymentSuccess = payment === "success";
-  const resolvedPlan = isPaymentSuccess ? plan.trim() || pendingPlan?.planName?.trim() || "" : plan.trim();
-  const resolvedSlug = isPaymentSuccess ? slug.trim() || pendingPlan?.planSlug?.trim() || "" : slug.trim();
+  const isPaymentCancel = payment === "cancel";
+  const hasPaymentCompanyId = guidRegex.test(paymentCompanyId);
+  const resolvedPlan = plan.trim() || pendingPlan?.planName?.trim() || "";
+  const resolvedSlug = slug.trim() || pendingPlan?.planSlug?.trim() || "";
   const effectivePlan = resolvedPlan || selectedPlanName.trim();
   const effectiveSlug = resolvedSlug || (selectedPlanName.trim() ? getPlanSlug(selectedPlanName.trim()) : "");
+  const shouldShowRegistrationForm = !hasPaymentCompanyId;
 
   useEffect(() => {
-    if (!isPaymentSuccess || resolvedPlan || resolvedSlug) return;
-
     let isMounted = true;
     const fetchPlans = async () => {
       setIsPlansLoading(true);
@@ -268,7 +279,181 @@ export default function CompanyCreatePage() {
     return () => {
       isMounted = false;
     };
-  }, [isPaymentSuccess, resolvedPlan, resolvedSlug]);
+  }, []);
+
+  const resolvePlanPrice = (planName: string) => {
+    const normalized = normalizePlanText(planName);
+    const matched = availablePlans.find((item) => normalizePlanText(item.planName) === normalized);
+    return matched?.planPrice;
+  };
+
+  const startStripeCheckout = async ({
+    companyIdValue,
+    planName,
+    planSlug,
+  }: {
+    companyIdValue: string;
+    planName: string;
+    planSlug: string;
+  }) => {
+    const createCheckoutPath = "/api/Tenant/CreateStripeCheckoutSessionRequest";
+    const successParams = new URLSearchParams();
+    successParams.set("payment", "success");
+    successParams.set("companyId", companyIdValue);
+    if (planName) successParams.set("plan", planName);
+    if (planSlug) successParams.set("slug", planSlug);
+
+    const cancelParams = new URLSearchParams();
+    cancelParams.set("payment", "cancel");
+    cancelParams.set("companyId", companyIdValue);
+    if (planName) cancelParams.set("plan", planName);
+    if (planSlug) cancelParams.set("slug", planSlug);
+
+    const successUrl = `${window.location.origin}/company/create?${successParams.toString()}`;
+    const cancelUrl = `${window.location.origin}/company/create?${cancelParams.toString()}`;
+
+    let lastError: string = companyCreateErrorMessages.genericActionFailed;
+    for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+      try {
+        const checkoutResponse = await fetch(buildApiUrl(apiBaseUrl, createCheckoutPath), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planName: planName || undefined,
+            planSlug: planSlug || undefined,
+            successUrl,
+            cancelUrl,
+          }),
+        });
+        const checkoutRaw = await checkoutResponse.text();
+        const checkoutPayload = parsePayload<StripeCheckoutSessionResponse>(checkoutRaw);
+
+        if (!checkoutResponse.ok) {
+          const checkoutError = extractApiError({
+            payload: checkoutPayload,
+            raw: checkoutRaw,
+            statusCode: checkoutResponse.status,
+            fallback: companyCreateErrorMessages.genericActionFailed,
+            statusCodeMap: {
+              401: "unauthorized",
+              404: "resource not found",
+              409: "already exists",
+              429: "too many requests",
+            },
+          });
+          const friendlyError = toFriendlyCompanyCreateError(checkoutError);
+          if (checkoutResponse.status < 500) {
+            setErrorMessage(friendlyError);
+            return false;
+          }
+          lastError = friendlyError;
+          continue;
+        }
+
+        const checkoutUrl = checkoutPayload.checkoutUrl ?? checkoutPayload.CheckoutUrl ?? "";
+        if (!checkoutUrl) {
+          lastError = companyCreateErrorMessages.genericActionFailed;
+          continue;
+        }
+
+        window.location.assign(checkoutUrl);
+        return true;
+      } catch (error) {
+        if (error instanceof Error && error.message) {
+          lastError = toFriendlyCompanyCreateError(error.message);
+        } else {
+          lastError = companyCreateErrorMessages.networkUnavailable;
+        }
+      }
+    }
+
+    setErrorMessage(lastError);
+    return false;
+  };
+
+  useEffect(() => {
+    if (!isPaymentSuccess || !hasPaymentCompanyId) return;
+    if (!effectivePlan && !effectiveSlug) {
+      setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
+      return;
+    }
+
+    let isMounted = true;
+    const activatePaidSubscription = async () => {
+      setIsLoading(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
+      let lastError: string = companyCreateErrorMessages.genericActionFailed;
+
+      for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+        try {
+          const activateResponse = await fetch(buildApiUrl(apiBaseUrl, activateSubscriptionPath), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              companyId: paymentCompanyId,
+              planName: effectivePlan || undefined,
+              planSlug: effectiveSlug || undefined,
+            }),
+          });
+
+          const activateRaw = await activateResponse.text();
+          const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
+
+          if (!activateResponse.ok) {
+            const activateError = extractApiError({
+              payload: activatePayload,
+              raw: activateRaw,
+              statusCode: activateResponse.status,
+              fallback: companyCreateErrorMessages.subscriptionActivationFailed,
+              statusCodeMap: {
+                401: "unauthorized",
+                404: "resource not found",
+                409: "already exists",
+                429: "too many requests",
+              },
+            });
+
+            const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
+            if (activateResponse.status < 500) {
+              if (isMounted) {
+                setErrorMessage(friendlyError);
+                setIsLoading(false);
+              }
+              return;
+            }
+            lastError = friendlyError;
+            continue;
+          }
+
+          clearPendingPlanSelection();
+          if (isMounted) {
+            setSuccessMessage("Odeme basariyla dogrulandi. Aboneliginiz aktif edildi, giris sayfasina yonlendiriliyorsunuz.");
+            setTimeout(() => { window.location.href = "/auth/login"; }, 1200);
+          }
+          return;
+        } catch (error) {
+          if (error instanceof Error && error.message) {
+            lastError = toFriendlyCompanyCreateError(error.message);
+          } else {
+            lastError = companyCreateErrorMessages.networkUnavailable;
+          }
+        }
+      }
+
+      if (isMounted) {
+        setErrorMessage(lastError);
+        setIsLoading(false);
+      }
+    };
+
+    void activatePaidSubscription();
+    return () => {
+      isMounted = false;
+    };
+  }, [isPaymentSuccess, hasPaymentCompanyId, paymentCompanyId, effectivePlan, effectiveSlug]);
 
   const handleCreate = async ({
     companyName,
@@ -287,13 +472,6 @@ export default function CompanyCreatePage() {
     let hasAnyReachableResponse = false;
     const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
     const registerPath = "/api/Identity/RegisterCommandRequest";
-    const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
-
-    if (isPaymentSuccess && !effectivePlan && !effectiveSlug) {
-      setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
-      setIsLoading(false);
-      return;
-    }
 
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
@@ -373,48 +551,26 @@ export default function CompanyCreatePage() {
           return;
         }
 
-        if (isPaymentSuccess) {
-          const activateUrl = buildApiUrl(apiBaseUrl, activateSubscriptionPath);
-          const activateResponse = await fetch(activateUrl, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              companyId: createdCompanyId,
-              planName: effectivePlan || undefined,
-              planSlug: effectiveSlug || undefined,
-            }),
+        const planPrice = effectivePlan ? resolvePlanPrice(effectivePlan) : undefined;
+        const shouldStartPaidCheckout =
+          Boolean(effectivePlan || effectiveSlug) && (planPrice === undefined || planPrice > 0);
+
+        if (shouldStartPaidCheckout) {
+          setSuccessMessage("Kayit basariyla tamamlandi. Odeme adimina yonlendiriliyorsunuz.");
+          const started = await startStripeCheckout({
+            companyIdValue: createdCompanyId,
+            planName: effectivePlan,
+            planSlug: effectiveSlug,
           });
-
-          const activateRaw = await activateResponse.text();
-          const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
-
-          if (!activateResponse.ok) {
-            const activateError = extractApiError({
-              payload: activatePayload,
-              raw: activateRaw,
-              statusCode: activateResponse.status,
-              fallback: companyCreateErrorMessages.subscriptionActivationFailed,
-              statusCodeMap: {
-                401: "unauthorized",
-                404: "resource not found",
-                409: "already exists",
-                429: "too many requests",
-              },
-            });
-            setErrorMessage(
-              `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`
-            );
+          if (!started) {
             setIsLoading(false);
-            return;
           }
+          return;
         }
 
-        if (isPaymentSuccess) {
-          clearPendingPlanSelection();
-        }
-
+        clearPendingPlanSelection();
         setSuccessMessage("Sirket ve yonetici basariyla olusturuldu. Giris sayfasina yonlendiriliyorsunuz.");
-        setTimeout(() => { window.location.href = "/"; }, 1200);
+        setTimeout(() => { window.location.href = "/auth/login"; }, 1200);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
@@ -599,7 +755,7 @@ export default function CompanyCreatePage() {
             </h1>
           </div>
 
-          {!isPaymentSuccess && (
+          {shouldShowRegistrationForm && (
             <div style={{
               display: "flex", gap: "10px",
               background: "rgba(251,191,36,0.07)",
@@ -612,12 +768,12 @@ export default function CompanyCreatePage() {
                 <circle cx="8" cy="11.5" r=".75" fill="#fbbf24" />
               </svg>
               <p style={{ fontSize: "13px", color: "rgba(251,191,36,0.8)", margin: 0, lineHeight: 1.5 }}>
-                Bu sayfa normalde odeme basarisindan sonra acilir.
+                Plan seciminiz alindi. Kayit tamamlandiktan sonra odeme adimina yonlendirileceksiniz.
               </p>
             </div>
           )}
 
-          {isPaymentSuccess && !resolvedPlan && !resolvedSlug && (
+          {!resolvedPlan && !resolvedSlug && (
             <div
               style={{
                 background: dark ? "rgba(19,236,200,0.08)" : "rgba(13,140,110,0.08)",
@@ -628,7 +784,7 @@ export default function CompanyCreatePage() {
               }}
             >
               <p style={{ margin: "0 0 10px", fontSize: "13px", lineHeight: 1.5, color: dark ? "#b7f7ea" : "#0d1b19" }}>
-                Odeme tamamlandi ancak plan bilgisi donmedi. Lutfen planinizi secin.
+                Plan bilgisi bulunamadi. Lutfen planinizi secin.
               </p>
               <select
                 className={inputFocusClass}
@@ -649,7 +805,49 @@ export default function CompanyCreatePage() {
             </div>
           )}
 
-          <form
+          {!shouldShowRegistrationForm && isPaymentCancel && (
+            <div style={{
+              display: "grid",
+              gap: "12px",
+              background: "rgba(251,191,36,0.07)",
+              border: "1px solid rgba(251,191,36,0.2)",
+              borderRadius: "12px",
+              padding: "12px 14px",
+              marginBottom: "18px",
+            }}>
+              <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.5, color: dark ? "#fde68a" : "#92400e" }}>
+                Odeme iptal edildi. Aboneligi tamamlamak icin odemeyi tekrar baslatabilirsiniz.
+              </p>
+              <button
+                type="button"
+                className="tf-btn"
+                disabled={isLoading || !effectivePlan}
+                onClick={() => {
+                  if (!effectivePlan) {
+                    setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
+                    return;
+                  }
+                  setIsLoading(true);
+                  void startStripeCheckout({
+                    companyIdValue: paymentCompanyId,
+                    planName: effectivePlan,
+                    planSlug: effectiveSlug,
+                  }).then((started) => {
+                    if (!started) setIsLoading(false);
+                  });
+                }}
+                style={{
+                  background: isLoading ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #13ecc8 0%, #0ab89f 100%)",
+                  color: "#0a0f0e",
+                }}
+              >
+                Odemeyi Tekrar Baslat
+              </button>
+            </div>
+          )}
+
+          {shouldShowRegistrationForm && (
+            <form
             onSubmit={handleSubmit((values) => {
               void handleCreate(values);
             })}
@@ -771,7 +969,8 @@ export default function CompanyCreatePage() {
                 "Hesabi Olustur"
               )}
             </button>
-          </form>
+            </form>
+          )}
 
           {errorMessage && (
             <div style={{

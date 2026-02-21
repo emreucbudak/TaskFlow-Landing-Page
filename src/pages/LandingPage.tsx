@@ -1,6 +1,5 @@
 ﻿import { useEffect, useState, type CSSProperties } from "react";
 
-import { checkoutMessages } from "../shared/errors/messages";
 
 const features = [
   {
@@ -172,14 +171,7 @@ const buildPlansUrl = (baseUrl: string) =>
   `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
-const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
 const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
-
-type PendingPlanSelection = {
-  planName: string;
-  planSlug: string;
-  createdAt: number;
-};
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
@@ -199,46 +191,11 @@ const getPlanSlug = (planName: string) => {
   return normalized.replace(/\s+/g, "-");
 };
 
-const getStripePaymentLink = (planSlug: string): string => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  const staticMap: Record<string, string | undefined> = {
-    startup: env.VITE_STRIPE_PAYMENT_LINK_STARTUP,
-    business: env.VITE_STRIPE_PAYMENT_LINK_BUSINESS,
-    enterprise: env.VITE_STRIPE_PAYMENT_LINK_ENTERPRISE,
-  };
-  const dynamicKey = `VITE_STRIPE_PAYMENT_LINK_${planSlug.replace(/[^a-z0-9]/gi, "_").toUpperCase()}`;
-  return (staticMap[planSlug] ?? env[dynamicKey] ?? "").trim();
-};
-
 const savePendingPlanSelection = (planName: string, planSlug: string) => {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.setItem(pendingPlanStorageKey, JSON.stringify({ planName, planSlug, createdAt: Date.now() }));
   } catch { /* ignore */ }
-};
-
-const readPendingPlanSelection = (): PendingPlanSelection | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(pendingPlanStorageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PendingPlanSelection>;
-    if (typeof parsed.planName !== "string" || typeof parsed.planSlug !== "string") return null;
-    return { planName: parsed.planName, planSlug: parsed.planSlug, createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : 0 };
-  } catch { return null; }
-};
-
-const clearPendingPlanSelection = () => {
-  if (typeof window === "undefined") return;
-  try { window.localStorage.removeItem(pendingPlanStorageKey); } catch { /* ignore */ }
-};
-
-const buildCompanyCreateUrl = (planName: string, planSlug: string) => {
-  const params = new URLSearchParams();
-  params.set("payment", "success");
-  if (planName) params.set("plan", planName);
-  if (planSlug) params.set("slug", planSlug);
-  return `/company/create?${params.toString()}`;
 };
 
 const trustedBy = [
@@ -444,7 +401,7 @@ const PhoneMockup = () => (
 const faqItems = [
   {
     q: "TaskFlow'u kullanmaya başlamak için ne yapmam gerekiyor?",
-    a: "Bir plan seçip ödemeyi tamamladıktan sonra şirket hesabınızı oluşturmanız yeterli. Kurulum birkaç dakika sürer, teknik bilgi gerekmez.",
+    a: "Bir plan seçtikten sonra şirket hesabınızı oluşturmanız yeterli. Kayıt tamamlandığında ödeme adımına yönlendirilirsiniz.",
   },
   {
     q: "Planımı sonradan değiştirebilir miyim?",
@@ -549,42 +506,18 @@ export default function TaskFlowLanding() {
   const cardBg = dark ? "#1a3632" : "#ffffff";
   const border = dark ? "rgba(76,154,141,.2)" : "rgba(76,154,141,.15)";
   const subText = dark ? "#9ca3af" : "rgba(13,27,25,.6)";
-  const queryParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
-  const paymentStatus = queryParams?.get("payment") ?? queryParams?.get("status") ?? "";
-  const paymentPlanFromQuery = queryParams?.get("plan") ?? "";
-  const paymentSlugFromQuery = queryParams?.get("slug") ?? "";
   const isCheckoutLoading = loadingPlanName !== null;
-
-  useEffect(() => {
-    if (paymentStatus !== "success") return;
-    const pending = readPendingPlanSelection();
-    const resolvedPlan = paymentPlanFromQuery || pending?.planName || "";
-    const resolvedSlug = paymentSlugFromQuery || pending?.planSlug || (resolvedPlan ? getPlanSlug(resolvedPlan) : "");
-    clearPendingPlanSelection();
-    window.location.replace(buildCompanyCreateUrl(resolvedPlan, resolvedSlug));
-  }, [paymentStatus, paymentPlanFromQuery, paymentSlugFromQuery]);
 
   const handlePlanSelect = (plan: PricingPlanCard) => {
     if (isCheckoutLoading) return;
     const planSlug = getPlanSlug(plan.name);
-    if (plan.amount <= 0) {
-      const params = new URLSearchParams();
-      params.set("payment", "success");
-      params.set("plan", plan.name);
-      params.set("slug", planSlug);
-      window.location.assign(`/company/create?${params.toString()}`);
-      return;
-    }
     setLoadingPlanName(plan.name);
     setCheckoutError("");
-    const paymentLink = getStripePaymentLink(planSlug);
-    if (!isHttpUrl(paymentLink)) {
-      setCheckoutError(checkoutMessages.paymentLinkMissing(plan.name));
-      setLoadingPlanName(null);
-      return;
-    }
     savePendingPlanSelection(plan.name, planSlug);
-    window.location.assign(paymentLink);
+    const params = new URLSearchParams();
+    params.set("plan", plan.name);
+    params.set("slug", planSlug);
+    window.location.assign(`/company/create?${params.toString()}`);
   };
 
   return (
@@ -692,11 +625,6 @@ export default function TaskFlowLanding() {
             <div style={{ textAlign: "center", marginBottom: "48px" }}>
               <h2 style={{ fontSize: "clamp(1.6rem,3vw,2.2rem)", fontWeight: 900, margin: "0 0 12px" }}>Fiyat Planları</h2>
               <p style={{ color: subText }}>Ekibinizin büyüklüğüne ve ihtiyaçlarına en uygun planı seçin.</p>
-              {paymentStatus === "cancel" && !checkoutError && (
-                <p style={{ margin: "14px 0 0", color: "#92400e", fontSize: "13px" }}>
-                  {checkoutMessages.paymentCanceled}
-                </p>
-              )}
               {checkoutError && (
                 <p style={{ margin: "14px 0 0", color: "#b91c1c", fontSize: "13px" }}>{checkoutError}</p>
               )}
