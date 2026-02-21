@@ -469,7 +469,7 @@ const PhoneMockup = () => (
 const faqItems = [
   {
     q: "TaskFlow'u kullanmaya başlamak için ne yapmam gerekiyor?",
-    a: "Bir plan seçip ödemeyi tamamlamanız yeterli. Ödeme başarılı olduğunda workspace sayfasına yönlendirilirsiniz.",
+    a: "Bir plan seçip ödemeyi tamamlamanız yeterli. Ödeme başarılı olduğunda kayıt sayfasına yönlendirilirsiniz.",
   },
   {
     q: "Planımı sonradan değiştirebilir miyim?",
