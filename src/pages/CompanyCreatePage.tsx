@@ -589,7 +589,7 @@ export default function CompanyCreatePage() {
                   Olusturuluyor...
                 </>
               ) : (
-                "Hesabi Olustur ->"
+                "Hesabi Olustur"
               )}
             </button>
           </form>

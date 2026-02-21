@@ -439,7 +439,7 @@ export default function LoginPage() {
                   Giris Yapiliyor...
                 </>
               ) : (
-                "Giris Yap ->"
+                "Giris Yap "
               )}
             </button>
           </form>
