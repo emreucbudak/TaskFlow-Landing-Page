@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 
 /* ─── tiny helpers ─── */
 function Avatar({
@@ -176,6 +177,7 @@ const bottomTabs = ["Ana Sayfa", "Görevler", "Sohbet", "Menü"];
 
 /* ─── component ─── */
 export default function Dashboard() {
+  const navigate = useNavigate();
   const [activeTab, setActiveTab] = useState("Ana Sayfa");
   const currentDateLabel = new Intl.DateTimeFormat("tr-TR", {
     weekday: "long",
@@ -184,6 +186,24 @@ export default function Dashboard() {
   })
     .format(new Date())
     .replace(/^./, (char) => char.toLocaleUpperCase("tr-TR"));
+
+  const handleTabClick = (tab: string) => {
+    setActiveTab(tab);
+
+    if (tab === "Ana Sayfa") {
+      navigate("/workspace");
+      return;
+    }
+
+    if (tab === "Görevler") {
+      navigate("/workspace/tasks");
+      return;
+    }
+
+    if (tab === "Sohbet") {
+      navigate("/workspace/chat");
+    }
+  };
 
   return (
     <div
@@ -217,7 +237,7 @@ export default function Dashboard() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div>
               <div style={{ fontSize: 12, color: "#9CA3AF" }}>{currentDateLabel}</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>Tekrar hoş geldin, Alex</div>
+              <div style={{ fontSize: 22, fontWeight: 800, color: "#111827" }}>Hoş geldin, Alex</div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
               <div style={{ position: "relative", cursor: "pointer" }}>
@@ -422,7 +442,7 @@ export default function Dashboard() {
           {bottomTabs.slice(0, 2).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => handleTabClick(tab)}
               style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab ? "#3B5BDB" : "#9CA3AF", padding: "0 24px" }}
             >
               <svg width="22" height="22" fill="none" viewBox="0 0 24 24">
@@ -445,7 +465,7 @@ export default function Dashboard() {
           {bottomTabs.slice(2).map(tab => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => handleTabClick(tab)}
               style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, background: "none", border: "none", cursor: "pointer", color: activeTab === tab ? "#3B5BDB" : "#9CA3AF", padding: "0 24px" }}
             >
               <svg width="22" height="22" fill="none" viewBox="0 0 24 24">

@@ -5,6 +5,8 @@ import CheckoutPage from './pages/CheckoutPage'
 import CompanyCreatePage from './pages/CompanyCreatePage'
 import LoginPage from './pages/LoginPage'
 import WorkspacePage from './pages/WorkspacePage'
+import WorkspaceTasksPage from './pages/WorkspaceTasksPage'
+import WorkspaceChatPage from './pages/WorkspaceChatPage'
 
 const parseJwtExp = (token: string): number | null => {
   try {
@@ -63,6 +65,22 @@ function App() {
         element={
           <ProtectedRoute>
             <WorkspacePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/workspace/tasks"
+        element={
+          <ProtectedRoute>
+            <WorkspaceTasksPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/workspace/chat"
+        element={
+          <ProtectedRoute>
+            <WorkspaceChatPage />
           </ProtectedRoute>
         }
       />
