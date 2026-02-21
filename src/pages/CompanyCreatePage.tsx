@@ -64,6 +64,7 @@ const readQuery = () => {
 };
 
 const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
+const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
 
 type PendingPlanSelection = {
   planName: string;
@@ -93,6 +94,27 @@ const clearPendingPlanSelection = () => {
   if (typeof window === "undefined") return;
   try {
     window.localStorage.removeItem(pendingPlanStorageKey);
+  } catch {
+    // localStorage read/write might be blocked
+  }
+};
+
+const saveStripePostCheckoutRedirect = (returnUrl: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      stripePostCheckoutRedirectStorageKey,
+      JSON.stringify({ returnUrl, createdAt: Date.now() })
+    );
+  } catch {
+    // localStorage read/write might be blocked
+  }
+};
+
+const clearStripePostCheckoutRedirect = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(stripePostCheckoutRedirectStorageKey);
   } catch {
     // localStorage read/write might be blocked
   }
@@ -245,12 +267,17 @@ export default function CompanyCreatePage() {
   const paymentCompanyId = companyId.trim();
   const isPaymentSuccess = payment === "success";
   const isPaymentCancel = payment === "cancel";
+  const isLegacyPaymentFlowEnabled = payment === "legacy";
   const hasPaymentCompanyId = guidRegex.test(paymentCompanyId);
   const resolvedPlan = plan.trim() || pendingPlan?.planName?.trim() || "";
   const resolvedSlug = slug.trim() || pendingPlan?.planSlug?.trim() || "";
   const effectivePlan = resolvedPlan || selectedPlanName.trim();
   const effectiveSlug = resolvedSlug || (selectedPlanName.trim() ? getPlanSlug(selectedPlanName.trim()) : "");
-  const shouldShowRegistrationForm = !hasPaymentCompanyId;
+  const shouldShowRegistrationForm = true;
+
+  useEffect(() => {
+    clearStripePostCheckoutRedirect();
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -356,6 +383,7 @@ export default function CompanyCreatePage() {
           continue;
         }
 
+        saveStripePostCheckoutRedirect(successUrl);
         window.location.assign(checkoutUrl);
         return true;
       } catch (error) {
@@ -430,8 +458,8 @@ export default function CompanyCreatePage() {
 
           clearPendingPlanSelection();
           if (isMounted) {
-            setSuccessMessage("Odeme basariyla dogrulandi. Aboneliginiz aktif edildi, giris sayfasina yonlendiriliyorsunuz.");
-            setTimeout(() => { window.location.href = "/auth/login"; }, 1200);
+            setSuccessMessage("Odeme basariyla dogrulandi. Aboneliginiz aktif edildi, sirket olusturma sayfasina yonlendiriliyorsunuz.");
+            setTimeout(() => { window.location.href = "/company/create"; }, 1200);
           }
           return;
         } catch (error) {
@@ -553,7 +581,7 @@ export default function CompanyCreatePage() {
 
         const planPrice = effectivePlan ? resolvePlanPrice(effectivePlan) : undefined;
         const shouldStartPaidCheckout =
-          Boolean(effectivePlan || effectiveSlug) && (planPrice === undefined || planPrice > 0);
+          isLegacyPaymentFlowEnabled && Boolean(effectivePlan || effectiveSlug) && ((planPrice ?? 1) > 0);
 
         if (shouldStartPaidCheckout) {
           setSuccessMessage("Kayit basariyla tamamlandi. Odeme adimina yonlendiriliyorsunuz.");
@@ -768,12 +796,12 @@ export default function CompanyCreatePage() {
                 <circle cx="8" cy="11.5" r=".75" fill="#fbbf24" />
               </svg>
               <p style={{ fontSize: "13px", color: "rgba(251,191,36,0.8)", margin: 0, lineHeight: 1.5 }}>
-                Plan seciminiz alindi. Kayit tamamlandiktan sonra odeme adimina yonlendirileceksiniz.
+                Sirket ve yonetici bilgilerini tamamlayarak kaydi bitirebilirsiniz.
               </p>
             </div>
           )}
 
-          {!resolvedPlan && !resolvedSlug && (
+          {isLegacyPaymentFlowEnabled && !resolvedPlan && !resolvedSlug && (
             <div
               style={{
                 background: dark ? "rgba(19,236,200,0.08)" : "rgba(13,140,110,0.08)",
@@ -805,7 +833,7 @@ export default function CompanyCreatePage() {
             </div>
           )}
 
-          {!shouldShowRegistrationForm && isPaymentCancel && (
+          {isLegacyPaymentFlowEnabled && !shouldShowRegistrationForm && isPaymentCancel && (
             <div style={{
               display: "grid",
               gap: "12px",
@@ -1006,3 +1034,4 @@ export default function CompanyCreatePage() {
     </>
   );
 }
+

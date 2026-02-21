@@ -1,5 +1,5 @@
 ﻿import { zodResolver } from "@hookform/resolvers/zod";
-import { useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { useForm } from "react-hook-form";
 import { useNavigate } from "react-router-dom";
 import { z } from "zod";
@@ -38,6 +38,64 @@ const getToken = (payload: LoginResponse, type: "access" | "refresh") =>
   type === "access"
     ? payload.accessToken ?? payload.AccessToken ?? ""
     : payload.refreshToken ?? payload.RefreshToken ?? "";
+
+const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
+
+type StripePostCheckoutRedirect = {
+  returnUrl: string;
+  createdAt: number;
+};
+
+const readStripePostCheckoutRedirect = (): StripePostCheckoutRedirect | null => {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(stripePostCheckoutRedirectStorageKey);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw) as Partial<StripePostCheckoutRedirect>;
+    const returnUrl = typeof parsed.returnUrl === "string" ? parsed.returnUrl.trim() : "";
+    const createdAt = typeof parsed.createdAt === "number" ? parsed.createdAt : 0;
+    if (!returnUrl || createdAt <= 0) return null;
+
+    if (returnUrl.startsWith("/")) {
+      return { returnUrl, createdAt };
+    }
+
+    if (returnUrl.startsWith(window.location.origin)) {
+      const relativeReturnUrl = returnUrl.slice(window.location.origin.length);
+      if (relativeReturnUrl.startsWith("/")) {
+        return { returnUrl: relativeReturnUrl, createdAt };
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const clearStripePostCheckoutRedirect = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(stripePostCheckoutRedirectStorageKey);
+  } catch {
+    // localStorage read/write might be blocked
+  }
+};
+
+const isLikelyStripeReferrer = () => {
+  if (typeof document === "undefined") return false;
+  const referrer = document.referrer?.trim();
+  if (!referrer) return false;
+
+  try {
+    const host = new URL(referrer).hostname.toLowerCase();
+    return host === "stripe.com" || host.endsWith(".stripe.com");
+  } catch {
+    return false;
+  }
+};
 
 type IconProps = { name: string; style?: CSSProperties };
 const Icon = ({ name, style }: IconProps) => (
@@ -94,6 +152,30 @@ export default function LoginPage() {
       password: "",
     },
   });
+
+  useEffect(() => {
+    const pendingRedirect = readStripePostCheckoutRedirect();
+    if (!pendingRedirect) return;
+
+    const maxAgeMs = 1000 * 60 * 120;
+    if (Date.now() - pendingRedirect.createdAt > maxAgeMs) {
+      clearStripePostCheckoutRedirect();
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const hasStripeQuerySignal =
+      params.has("payment") ||
+      params.has("status") ||
+      params.has("session_id") ||
+      params.has("checkout_session_id") ||
+      params.has("redirect_status");
+
+    if (!hasStripeQuerySignal && !isLikelyStripeReferrer()) return;
+
+    clearStripePostCheckoutRedirect();
+    window.location.replace(pendingRedirect.returnUrl);
+  }, []);
 
   const handleLogin = async ({ email, password }: LoginFormValues) => {
     if (isLoading) return;

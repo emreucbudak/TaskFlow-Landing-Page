@@ -43,6 +43,13 @@ type PricingPlanCard = {
   popular: boolean;
 };
 
+type StripeCheckoutSessionResponse = {
+  checkoutUrl?: string;
+  CheckoutUrl?: string;
+  message?: string;
+  detail?: string;
+};
+
 const fallbackPricingPlans: PricingPlanCard[] = [
   {
     name: "Start-up",
@@ -171,13 +178,14 @@ const buildPlansUrl = (baseUrl: string) =>
   `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
-const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
+const buildApiUrl = (baseUrl: string, endpointPath: string) =>
+  baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
-  return [envBaseUrl, "http://localhost:5172", "https://localhost:7243", "http://localhost:8080", "https://localhost:8081"]
+  return ["", envBaseUrl, "http://localhost:5172", "https://localhost:7243", "http://localhost:8080", "https://localhost:8081"]
     .map((url) => normalizeBaseUrl(url))
-    .filter((url, index, arr) => Boolean(url) && arr.indexOf(url) === index);
+    .filter((url, index, arr) => arr.indexOf(url) === index);
 };
 
 const normalizePlanText = (value: string) =>
@@ -191,11 +199,27 @@ const getPlanSlug = (planName: string) => {
   return normalized.replace(/\s+/g, "-");
 };
 
-const savePendingPlanSelection = (planName: string, planSlug: string) => {
+const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
+
+const saveStripePostCheckoutRedirect = (returnUrl: string) => {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(pendingPlanStorageKey, JSON.stringify({ planName, planSlug, createdAt: Date.now() }));
-  } catch { /* ignore */ }
+    window.localStorage.setItem(
+      stripePostCheckoutRedirectStorageKey,
+      JSON.stringify({ returnUrl, createdAt: Date.now() })
+    );
+  } catch {
+    // ignore storage errors
+  }
+};
+
+const clearStripePostCheckoutRedirect = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(stripePostCheckoutRedirectStorageKey);
+  } catch {
+    // ignore storage errors
+  }
 };
 
 const trustedBy = [
@@ -401,7 +425,7 @@ const PhoneMockup = () => (
 const faqItems = [
   {
     q: "TaskFlow'u kullanmaya başlamak için ne yapmam gerekiyor?",
-    a: "Bir plan seçtikten sonra şirket hesabınızı oluşturmanız yeterli. Kayıt tamamlandığında ödeme adımına yönlendirilirsiniz.",
+    a: "Bir plan seçip ödemeyi tamamlamanız yeterli. Ödeme başarılı olduğunda workspace sayfasına yönlendirilirsiniz.",
   },
   {
     q: "Planımı sonradan değiştirebilir miyim?",
@@ -507,17 +531,78 @@ export default function TaskFlowLanding() {
   const border = dark ? "rgba(76,154,141,.2)" : "rgba(76,154,141,.15)";
   const subText = dark ? "#9ca3af" : "rgba(13,27,25,.6)";
   const isCheckoutLoading = loadingPlanName !== null;
+  const queryParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+  const paymentStatus = queryParams?.get("payment") ?? queryParams?.get("status") ?? "";
 
-  const handlePlanSelect = (plan: PricingPlanCard) => {
+  useEffect(() => {
+    if (paymentStatus === "cancel" || paymentStatus === "success") {
+      clearStripePostCheckoutRedirect();
+    }
+  }, [paymentStatus]);
+
+  const handlePlanSelect = async (plan: PricingPlanCard) => {
     if (isCheckoutLoading) return;
+
     const planSlug = getPlanSlug(plan.name);
     setLoadingPlanName(plan.name);
     setCheckoutError("");
-    savePendingPlanSelection(plan.name, planSlug);
-    const params = new URLSearchParams();
-    params.set("plan", plan.name);
-    params.set("slug", planSlug);
-    window.location.assign(`/company/create?${params.toString()}`);
+
+    const createCheckoutPath = "/api/Tenant/CreateStripeCheckoutSessionRequest";
+    const successParams = new URLSearchParams();
+    successParams.set("payment", "success");
+    successParams.set("plan", plan.name);
+    successParams.set("slug", planSlug);
+    const successUrl = `${window.location.origin}/company/create?${successParams.toString()}`;
+    const cancelParams = new URLSearchParams();
+    cancelParams.set("payment", "cancel");
+    cancelParams.set("plan", plan.name);
+    cancelParams.set("slug", planSlug);
+    const cancelUrl = `${window.location.origin}/?${cancelParams.toString()}`;
+
+    let lastError = "Stripe odeme oturumu baslatilamadi. Lutfen tekrar deneyin.";
+    for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+      try {
+        const response = await fetch(buildApiUrl(apiBaseUrl, createCheckoutPath), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planName: plan.name,
+            planSlug,
+            successUrl,
+            cancelUrl,
+          }),
+        });
+
+        const raw = await response.text();
+        const payload = (() => {
+          try {
+            return JSON.parse(raw) as StripeCheckoutSessionResponse;
+          } catch {
+            return {} as StripeCheckoutSessionResponse;
+          }
+        })();
+
+        if (!response.ok) {
+          lastError = payload.detail?.trim() || payload.message?.trim() || `Odeme baslatilamadi (HTTP ${response.status}).`;
+          continue;
+        }
+
+        const checkoutUrl = payload.checkoutUrl ?? payload.CheckoutUrl ?? "";
+        if (!checkoutUrl) {
+          lastError = "Stripe yonlendirme baglantisi olusturulamadi. Lutfen tekrar deneyin.";
+          continue;
+        }
+
+        saveStripePostCheckoutRedirect(successUrl);
+        window.location.assign(checkoutUrl);
+        return;
+      } catch {
+        lastError = "Sunucuya ulasilamadi. Baglantinizi kontrol edip tekrar deneyin.";
+      }
+    }
+
+    setCheckoutError(lastError);
+    setLoadingPlanName(null);
   };
 
   return (
@@ -625,6 +710,11 @@ export default function TaskFlowLanding() {
             <div style={{ textAlign: "center", marginBottom: "48px" }}>
               <h2 style={{ fontSize: "clamp(1.6rem,3vw,2.2rem)", fontWeight: 900, margin: "0 0 12px" }}>Fiyat Planları</h2>
               <p style={{ color: subText }}>Ekibinizin büyüklüğüne ve ihtiyaçlarına en uygun planı seçin.</p>
+              {paymentStatus === "cancel" && !checkoutError && (
+                <p style={{ margin: "14px 0 0", color: "#92400e", fontSize: "13px" }}>
+                  Odeme iptal edildi. Dilediginiz zaman tekrar deneyebilirsiniz.
+                </p>
+              )}
               {checkoutError && (
                 <p style={{ margin: "14px 0 0", color: "#b91c1c", fontSize: "13px" }}>{checkoutError}</p>
               )}
@@ -667,7 +757,7 @@ export default function TaskFlowLanding() {
                     boxShadow: plan.popular ? "0 4px 16px rgba(19,236,200,.25)" : "none",
                     opacity: isCheckoutLoading && loadingPlanName !== plan.name ? 0.6 : 1,
                   }}>
-                    {loadingPlanName === plan.name ? "Yönlendiriliyor..." : plan.cta}
+                    {plan.cta}
                   </button>
                 </div>
               ))}
