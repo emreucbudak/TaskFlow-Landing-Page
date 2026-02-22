@@ -1,10 +1,10 @@
-﻿import { useMemo, useState, type CSSProperties } from "react";
-
-type ApiErrorPayload = {
-  message?: string;
-  detail?: string;
-  errors?: Record<string, string[]>;
-};
+import { zodResolver } from "@hookform/resolvers/zod";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useForm } from "react-hook-form";
+import { z } from "zod";
+import { extractApiError, parsePayload, type ApiErrorPayload } from "../shared/errors/api";
+import { toFriendlyCompanyCreateError } from "../shared/errors/mappers";
+import { companyCreateErrorMessages, validationMessages } from "../shared/errors/messages";
 
 type CreateCompanyResponse = {
   companyId?: string;
@@ -16,16 +16,127 @@ type CreateCompanyResponse = {
   errors?: Record<string, string[]>;
 };
 
+type StripeCheckoutSessionResponse = {
+  checkoutUrl?: string;
+  CheckoutUrl?: string;
+  message?: string;
+  detail?: string;
+  errors?: Record<string, string[]>;
+};
+
+type ApiCompanyPlan = {
+  planName: string;
+  planPrice: number;
+};
+
+const companyCreateSchema = z
+  .object({
+    companyName: z.string().trim().min(1, validationMessages.requiredCompanyName),
+    adminName: z.string().trim().min(1, validationMessages.requiredAdminName),
+    adminEmail: z.string().trim().min(1, validationMessages.requiredEmail).email(validationMessages.invalidEmail),
+    password: z
+      .string()
+      .min(8, validationMessages.passwordMinLength)
+      .regex(/[A-Z]/, validationMessages.passwordMustContainUppercase)
+      .regex(/[a-z]/, validationMessages.passwordMustContainLowercase)
+      .regex(/[0-9]/, validationMessages.passwordMustContainNumber),
+    confirmPassword: z.string().min(1, validationMessages.requiredPasswordConfirmation),
+  })
+  .refine((value) => value.password === value.confirmPassword, {
+    message: validationMessages.passwordsDoNotMatch,
+    path: ["confirmPassword"],
+  });
+
+type CompanyCreateFormValues = z.infer<typeof companyCreateSchema>;
+
 const guidRegex =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const readQuery = () => {
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
-  return { payment: params.get("payment") ?? "" };
+  return {
+    payment: params.get("payment") ?? "",
+    plan: params.get("plan") ?? "",
+    slug: params.get("slug") ?? "",
+    companyId: params.get("companyId") ?? "",
+  };
+};
+
+const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
+const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
+
+type PendingPlanSelection = {
+  planName: string;
+  planSlug: string;
+  createdAt?: number;
+};
+
+const readPendingPlanSelection = (): PendingPlanSelection | null => {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw = window.localStorage.getItem(pendingPlanStorageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PendingPlanSelection>;
+    if (typeof parsed.planName !== "string" || typeof parsed.planSlug !== "string") return null;
+    return {
+      planName: parsed.planName,
+      planSlug: parsed.planSlug,
+      createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : undefined,
+    };
+  } catch {
+    return null;
+  }
+};
+
+const clearPendingPlanSelection = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(pendingPlanStorageKey);
+  } catch {
+    // localStorage read/write might be blocked
+  }
+};
+
+const saveStripePostCheckoutRedirect = (returnUrl: string) => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(
+      stripePostCheckoutRedirectStorageKey,
+      JSON.stringify({ returnUrl, createdAt: Date.now() })
+    );
+  } catch {
+    // localStorage read/write might be blocked
+  }
+};
+
+const clearStripePostCheckoutRedirect = () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(stripePostCheckoutRedirectStorageKey);
+  } catch {
+    // localStorage read/write might be blocked
+  }
 };
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
+
+const normalizePlanText = (value: string) =>
+  value
+    .toLocaleLowerCase("tr-TR")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+
+const getPlanSlug = (planName: string) => {
+  const normalized = normalizePlanText(planName);
+  if (/(start|startup|baslangic)/.test(normalized)) return "startup";
+  if (/(business|profesyonel)/.test(normalized)) return "business";
+  if (/(enterprise|kurumsal)/.test(normalized)) return "enterprise";
+  return normalized.replace(/\s+/g, "-");
+};
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl =
@@ -45,71 +156,50 @@ const getApiBaseUrlCandidates = (): string[] => {
 const buildApiUrl = (baseUrl: string, endpointPath: string) =>
   baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
 
-const parsePayload = <T extends object>(raw: string): T => {
-  try {
-    return raw ? (JSON.parse(raw) as T) : ({} as T);
-  } catch {
-    return {} as T;
-  }
+const buildPlansUrl = (baseUrl: string) =>
+  `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
+
+const toRecord = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+
+const parseApiPlans = (payload: unknown): ApiCompanyPlan[] => {
+  const payloadRecord = toRecord(payload);
+  const dataRecord = toRecord(payloadRecord.data);
+  const itemsRecord = toRecord(payloadRecord.items);
+  const resultRecord = toRecord(payloadRecord.result);
+  const valueRecord = toRecord(payloadRecord.value);
+  const rawArray =
+    Array.isArray(payload) ? payload :
+      Array.isArray(payloadRecord.$values) ? payloadRecord.$values :
+        Array.isArray(payloadRecord.data) ? payloadRecord.data :
+          Array.isArray(dataRecord.$values) ? dataRecord.$values :
+            Array.isArray(payloadRecord.items) ? payloadRecord.items :
+              Array.isArray(itemsRecord.$values) ? itemsRecord.$values :
+                Array.isArray(payloadRecord.result) ? payloadRecord.result :
+                  Array.isArray(resultRecord.$values) ? resultRecord.$values :
+                    Array.isArray(payloadRecord.value) ? payloadRecord.value :
+                      Array.isArray(valueRecord.$values) ? valueRecord.$values :
+                        [];
+
+  return rawArray
+    .map((item) => {
+      const raw = toRecord(item);
+      const planNameValue = raw.planName ?? raw.PlanName ?? raw.name ?? raw.Name;
+      const planName = typeof planNameValue === "string" ? planNameValue : undefined;
+      const planPrice = Number(raw.planPrice ?? raw.PlanPrice ?? raw.price ?? raw.Price);
+      if (!planName || Number.isNaN(planPrice)) return null;
+      return { planName, planPrice };
+    })
+    .filter((plan): plan is ApiCompanyPlan => plan !== null)
+    .sort((a, b) => a.planPrice - b.planPrice);
 };
 
-const extractApiError = (
-  payload: ApiErrorPayload,
-  raw: string,
-  fallback: string
-): string => {
-  const validationError = payload.errors
-    ? Object.values(payload.errors).flat().find(Boolean)
-    : "";
-  return (
-    validationError ||
-    payload.message ||
-    payload.detail ||
-    (raw.trim() ? raw : fallback)
-  );
-};
-
-const toFriendlyCompanyCreateError = (rawError: string): string => {
-  const normalized = rawError.trim().toLocaleLowerCase("tr-TR");
-
-  if (!normalized) {
-    return "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.";
-  }
-  if (normalized.includes("failed to fetch") || normalized.includes("network error")) {
-    return "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
-  }
-  if (normalized.includes("emaili zaten kullanılıyor")) {
-    return "Bu e-posta adresi zaten kullanımda.";
-  }
-  if (normalized.includes("kayıt işlemi başarısız oldu")) {
-    return "Yönetici hesabı oluşturulamadı. Lütfen girdiğiniz bilgileri kontrol edip tekrar deneyin.";
-  }
-  if (normalized.includes("one or more validation errors occurred")) {
-    return "Gönderilen bilgilerde eksik veya hatalı alanlar var.";
-  }
-  if (normalized.includes("şifre")) {
-    return rawError;
-  }
-
-  return "İşlem sırasında bir hata oluştu. Lütfen tekrar deneyin.";
-};
-
-const getPasswordPolicyErrors = (passwordValue: string): string[] => {
-  const errors: string[] = [];
-  if (passwordValue.length < 8) {
-    errors.push("en az 8 karakter");
-  }
-  if (!/[A-Z]/.test(passwordValue)) {
-    errors.push("en az 1 büyük harf");
-  }
-  if (!/[a-z]/.test(passwordValue)) {
-    errors.push("en az 1 küçük harf");
-  }
-  if (!/[0-9]/.test(passwordValue)) {
-    errors.push("en az 1 rakam");
-  }
-  return errors;
-};
+const formatPlanPrice = (price: number) =>
+  new Intl.NumberFormat("tr-TR", {
+    style: "currency",
+    currency: "TRY",
+    maximumFractionDigits: 0,
+  }).format(price);
 
 type IconProps = { name: string; style?: CSSProperties };
 const Icon = ({ name, style }: IconProps) => (
@@ -150,36 +240,264 @@ const Blobs = ({ dark }: { dark: boolean }) => (
 );
 
 export default function CompanyCreatePage() {
-  const { payment } = useMemo(() => readQuery(), []);
+  const { payment, plan, slug, companyId } = useMemo(() => readQuery(), []);
+  const pendingPlan = useMemo(() => readPendingPlanSelection(), []);
   const [dark, setDark] = useState(true);
-  const [companyName, setCompanyName] = useState("");
-  const [adminName, setAdminName] = useState("");
-  const [adminEmail, setAdminEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
+  const [availablePlans, setAvailablePlans] = useState<ApiCompanyPlan[]>([]);
+  const [selectedPlanName, setSelectedPlanName] = useState("");
+  const [isPlansLoading, setIsPlansLoading] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+  } = useForm<CompanyCreateFormValues>({
+    resolver: zodResolver(companyCreateSchema),
+    defaultValues: {
+      companyName: "",
+      adminName: "",
+      adminEmail: "",
+      password: "",
+      confirmPassword: "",
+    },
+  });
 
+  const paymentCompanyId = companyId.trim();
   const isPaymentSuccess = payment === "success";
+  const isPaymentCancel = payment === "cancel";
+  const isLegacyPaymentFlowEnabled = payment === "legacy";
+  const hasPaymentCompanyId = guidRegex.test(paymentCompanyId);
+  const resolvedPlan = plan.trim() || pendingPlan?.planName?.trim() || "";
+  const resolvedSlug = slug.trim() || pendingPlan?.planSlug?.trim() || "";
+  const effectivePlan = resolvedPlan || selectedPlanName.trim();
+  const effectiveSlug = resolvedSlug || (selectedPlanName.trim() ? getPlanSlug(selectedPlanName.trim()) : "");
+  const shouldShowRegistrationForm = true;
 
-  const handleCreate = async () => {
-    if (isLoading) return;
-    if (!companyName.trim()) { setErrorMessage("Lütfen şirket adını girin."); return; }
-    if (!adminName.trim() || !adminEmail.trim() || !password) { setErrorMessage("Lütfen yönetici bilgilerini eksiksiz doldurun."); return; }
-    if (password !== confirmPassword) { setErrorMessage("Şifreler eşleşmiyor."); return; }
-    const passwordPolicyErrors = getPasswordPolicyErrors(password);
-    if (passwordPolicyErrors.length > 0) {
-      setErrorMessage(`Şifre kuralları sağlanmıyor: ${passwordPolicyErrors.join(", ")}.`);
+  useEffect(() => {
+    clearStripePostCheckoutRedirect();
+  }, []);
+
+  useEffect(() => {
+    let isMounted = true;
+    const fetchPlans = async () => {
+      setIsPlansLoading(true);
+      try {
+        for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+          try {
+            const response = await fetch(buildPlansUrl(apiBaseUrl), { cache: "no-store" });
+            if (!response.ok) continue;
+            const payload: unknown = await response.json();
+            const plans = parseApiPlans(payload);
+            if (plans.length === 0) continue;
+            if (isMounted) setAvailablePlans(plans);
+            return;
+          } catch {
+            continue;
+          }
+        }
+      } finally {
+        if (isMounted) setIsPlansLoading(false);
+      }
+    };
+
+    void fetchPlans();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const resolvePlanPrice = (planName: string) => {
+    const normalized = normalizePlanText(planName);
+    const matched = availablePlans.find((item) => normalizePlanText(item.planName) === normalized);
+    return matched?.planPrice;
+  };
+
+  const startStripeCheckout = async ({
+    companyIdValue,
+    planName,
+    planSlug,
+  }: {
+    companyIdValue: string;
+    planName: string;
+    planSlug: string;
+  }) => {
+    const createCheckoutPath = "/api/Tenant/CreateStripeCheckoutSessionRequest";
+    const successParams = new URLSearchParams();
+    successParams.set("payment", "success");
+    successParams.set("companyId", companyIdValue);
+    if (planName) successParams.set("plan", planName);
+    if (planSlug) successParams.set("slug", planSlug);
+
+    const cancelParams = new URLSearchParams();
+    cancelParams.set("payment", "cancel");
+    cancelParams.set("companyId", companyIdValue);
+    if (planName) cancelParams.set("plan", planName);
+    if (planSlug) cancelParams.set("slug", planSlug);
+
+    const successUrl = `${window.location.origin}/company/create?${successParams.toString()}`;
+    const cancelUrl = `${window.location.origin}/company/create?${cancelParams.toString()}`;
+
+    let lastError: string = companyCreateErrorMessages.genericActionFailed;
+    for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+      try {
+        const checkoutResponse = await fetch(buildApiUrl(apiBaseUrl, createCheckoutPath), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planName: planName || undefined,
+            planSlug: planSlug || undefined,
+            successUrl,
+            cancelUrl,
+          }),
+        });
+        const checkoutRaw = await checkoutResponse.text();
+        const checkoutPayload = parsePayload<StripeCheckoutSessionResponse>(checkoutRaw);
+
+        if (!checkoutResponse.ok) {
+          const checkoutError = extractApiError({
+            payload: checkoutPayload,
+            raw: checkoutRaw,
+            statusCode: checkoutResponse.status,
+            fallback: companyCreateErrorMessages.genericActionFailed,
+            statusCodeMap: {
+              401: "unauthorized",
+              404: "resource not found",
+              409: "already exists",
+              429: "too many requests",
+            },
+          });
+          const friendlyError = toFriendlyCompanyCreateError(checkoutError);
+          if (checkoutResponse.status < 500) {
+            setErrorMessage(friendlyError);
+            return false;
+          }
+          lastError = friendlyError;
+          continue;
+        }
+
+        const checkoutUrl = checkoutPayload.checkoutUrl ?? checkoutPayload.CheckoutUrl ?? "";
+        if (!checkoutUrl) {
+          lastError = companyCreateErrorMessages.genericActionFailed;
+          continue;
+        }
+
+        saveStripePostCheckoutRedirect(successUrl);
+        window.location.assign(checkoutUrl);
+        return true;
+      } catch (error) {
+        if (error instanceof Error && error.message) {
+          lastError = toFriendlyCompanyCreateError(error.message);
+        } else {
+          lastError = companyCreateErrorMessages.networkUnavailable;
+        }
+      }
+    }
+
+    setErrorMessage(lastError);
+    return false;
+  };
+
+  useEffect(() => {
+    if (!isPaymentSuccess || !hasPaymentCompanyId) return;
+    if (!effectivePlan && !effectiveSlug) {
+      setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
       return;
     }
+
+    let isMounted = true;
+    const activatePaidSubscription = async () => {
+      setIsLoading(true);
+      setErrorMessage("");
+      setSuccessMessage("");
+
+      const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
+      let lastError: string = companyCreateErrorMessages.genericActionFailed;
+
+      for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+        try {
+          const activateResponse = await fetch(buildApiUrl(apiBaseUrl, activateSubscriptionPath), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              companyId: paymentCompanyId,
+              planName: effectivePlan || undefined,
+              planSlug: effectiveSlug || undefined,
+            }),
+          });
+
+          const activateRaw = await activateResponse.text();
+          const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
+
+          if (!activateResponse.ok) {
+            const activateError = extractApiError({
+              payload: activatePayload,
+              raw: activateRaw,
+              statusCode: activateResponse.status,
+              fallback: companyCreateErrorMessages.subscriptionActivationFailed,
+              statusCodeMap: {
+                401: "unauthorized",
+                404: "resource not found",
+                409: "already exists",
+                429: "too many requests",
+              },
+            });
+
+            const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
+            if (activateResponse.status < 500) {
+              if (isMounted) {
+                setErrorMessage(friendlyError);
+                setIsLoading(false);
+              }
+              return;
+            }
+            lastError = friendlyError;
+            continue;
+          }
+
+          clearPendingPlanSelection();
+          if (isMounted) {
+            setSuccessMessage("Odeme basariyla dogrulandi. Aboneliginiz aktif edildi, sirket olusturma sayfasina yonlendiriliyorsunuz.");
+            setTimeout(() => { window.location.href = "/company/create"; }, 1200);
+          }
+          return;
+        } catch (error) {
+          if (error instanceof Error && error.message) {
+            lastError = toFriendlyCompanyCreateError(error.message);
+          } else {
+            lastError = companyCreateErrorMessages.networkUnavailable;
+          }
+        }
+      }
+
+      if (isMounted) {
+        setErrorMessage(lastError);
+        setIsLoading(false);
+      }
+    };
+
+    void activatePaidSubscription();
+    return () => {
+      isMounted = false;
+    };
+  }, [isPaymentSuccess, hasPaymentCompanyId, paymentCompanyId, effectivePlan, effectiveSlug]);
+
+  const handleCreate = async ({
+    companyName,
+    adminName,
+    adminEmail,
+    password,
+  }: CompanyCreateFormValues) => {
+    if (isLoading) return;
 
     setIsLoading(true);
     setErrorMessage("");
     setSuccessMessage("");
 
-    let lastError = "İşlem sırasında bir hata oluştu.";
+    let lastError: string = companyCreateErrorMessages.genericActionFailed;
     let hasAnyNetworkError = false;
+    let hasAnyReachableResponse = false;
     const createCompanyPath = "/api/Identity/CreateCompanyCommandRequest";
     const registerPath = "/api/Identity/RegisterCommandRequest";
 
@@ -191,19 +509,37 @@ export default function CompanyCreatePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ companyName: companyName.trim() }),
         });
+        hasAnyReachableResponse = true;
 
         const createRaw = await createResponse.text();
         const createPayload = parsePayload<CreateCompanyResponse>(createRaw);
 
         if (!createResponse.ok) {
-          const createError = extractApiError(createPayload, createRaw, lastError);
-          lastError = toFriendlyCompanyCreateError(createError);
+          const createError = extractApiError({
+            payload: createPayload,
+            raw: createRaw,
+            statusCode: createResponse.status,
+            fallback: lastError,
+            statusCodeMap: {
+              401: "unauthorized",
+              404: "resource not found",
+              409: "already exists",
+              429: "too many requests",
+            },
+          });
+          const friendlyError = toFriendlyCompanyCreateError(createError);
+          if (createResponse.status < 500) {
+            setErrorMessage(friendlyError);
+            setIsLoading(false);
+            return;
+          }
+          lastError = friendlyError;
           continue;
         }
 
         const createdCompanyId = createPayload.companyId ?? createPayload.CompanyId ?? "";
         if (!guidRegex.test(createdCompanyId)) {
-          lastError = "Şirket oluşturuldu ancak işlem tamamlanamadı. Lütfen tekrar deneyin.";
+          lastError = companyCreateErrorMessages.companyCreatedButIncomplete;
           continue;
         }
 
@@ -224,31 +560,123 @@ export default function CompanyCreatePage() {
         const registerPayload = parsePayload<ApiErrorPayload>(registerRaw);
 
         if (!registerResponse.ok) {
-          let registerError = extractApiError(registerPayload, registerRaw, "Yönetici hesabı oluşturulamadı.");
-          if (/Kayıt işlemi başarısız oldu/i.test(registerError)) {
-            registerError = "Şifre kuralları sağlanmıyor olabilir (en az 8 karakter, büyük harf, küçük harf ve rakam).";
-          }
-          setErrorMessage(`Şirket oluşturuldu ancak yönetici hesabı açılamadı: ${toFriendlyCompanyCreateError(registerError)}`);
+          const registerError = extractApiError({
+            payload: registerPayload,
+            raw: registerRaw,
+            statusCode: registerResponse.status,
+            fallback: companyCreateErrorMessages.registerFailed,
+            statusCodeMap: {
+              401: "unauthorized",
+              404: "resource not found",
+              409: "already exists",
+              429: "too many requests",
+            },
+          });
+          setErrorMessage(
+            `${companyCreateErrorMessages.companyCreatedButAdminFailedPrefix} ${toFriendlyCompanyCreateError(registerError)}`
+          );
           setIsLoading(false);
           return;
         }
 
-        setSuccessMessage("Şirket ve yönetici başarıyla oluşturuldu. Giriş sayfasına yönlendiriliyorsunuz.");
-        setTimeout(() => { window.location.href = "/"; }, 1200);
+        const planPrice = effectivePlan ? resolvePlanPrice(effectivePlan) : undefined;
+        const shouldStartPaidCheckout =
+          isLegacyPaymentFlowEnabled && Boolean(effectivePlan || effectiveSlug) && ((planPrice ?? 1) > 0);
+
+        if (shouldStartPaidCheckout) {
+          setSuccessMessage("Kayit basariyla tamamlandi. Odeme adimina yonlendiriliyorsunuz.");
+          const started = await startStripeCheckout({
+            companyIdValue: createdCompanyId,
+            planName: effectivePlan,
+            planSlug: effectiveSlug,
+          });
+          if (!started) {
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        const activationPlanName = effectivePlan || "Start-up";
+        const activationPlanSlug = effectiveSlug || getPlanSlug(activationPlanName);
+        const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
+        let activationLastError: string = companyCreateErrorMessages.subscriptionActivationFailed;
+        let isSubscriptionActivated = false;
+
+        for (const subscriptionApiBaseUrl of getApiBaseUrlCandidates()) {
+          try {
+            const activateResponse = await fetch(buildApiUrl(subscriptionApiBaseUrl, activateSubscriptionPath), {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                companyId: createdCompanyId,
+                planName: activationPlanName || undefined,
+                planSlug: activationPlanSlug || undefined,
+              }),
+            });
+
+            const activateRaw = await activateResponse.text();
+            const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
+
+            if (!activateResponse.ok) {
+              const activateError = extractApiError({
+                payload: activatePayload,
+                raw: activateRaw,
+                statusCode: activateResponse.status,
+                fallback: companyCreateErrorMessages.subscriptionActivationFailed,
+                statusCodeMap: {
+                  401: "unauthorized",
+                  404: "resource not found",
+                  409: "already exists",
+                  429: "too many requests",
+                },
+              });
+              const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
+
+              if (activateResponse.status < 500) {
+                setErrorMessage(friendlyError);
+                setIsLoading(false);
+                return;
+              }
+
+              activationLastError = friendlyError;
+              continue;
+            }
+
+            isSubscriptionActivated = true;
+            break;
+          } catch (error) {
+            if (error instanceof Error && error.message) {
+              activationLastError = toFriendlyCompanyCreateError(error.message);
+            } else {
+              activationLastError = companyCreateErrorMessages.networkUnavailable;
+            }
+          }
+        }
+
+        if (!isSubscriptionActivated) {
+          setErrorMessage(activationLastError);
+          setIsLoading(false);
+          return;
+        }
+
+        clearPendingPlanSelection();
+        setSuccessMessage("Kayit basarili.");
+        setIsLoading(false);
         return;
       } catch (error) {
         hasAnyNetworkError = true;
-        if (error instanceof Error && error.message) {
-          lastError = toFriendlyCompanyCreateError(error.message);
-        } else {
-          lastError = "Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.";
+        if (!hasAnyReachableResponse) {
+          if (error instanceof Error && error.message) {
+            lastError = toFriendlyCompanyCreateError(error.message);
+          } else {
+            lastError = companyCreateErrorMessages.networkUnavailable;
+          }
         }
-        continue;
       }
     }
 
-    if (hasAnyNetworkError) {
-      setErrorMessage("Sunucuya şu anda ulaşılamıyor. Lütfen birazdan tekrar deneyin.");
+    if (hasAnyNetworkError && !hasAnyReachableResponse) {
+      setErrorMessage(companyCreateErrorMessages.networkUnavailable);
       setIsLoading(false);
       return;
     }
@@ -257,7 +685,6 @@ export default function CompanyCreatePage() {
     setIsLoading(false);
   };
 
-  // ─── Tema değerleri ───────────────────────────────────────────────────────
   const bg = dark ? "#0a0f0e" : "#f0faf8";
   const cardBg = dark ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.85)";
   const cardBorder = dark ? "rgba(19,236,200,0.15)" : "rgba(19,236,200,0.3)";
@@ -316,6 +743,13 @@ export default function CompanyCreatePage() {
     letterSpacing: "0.01em",
   };
 
+  const fieldErrorStyle: CSSProperties = {
+    margin: "8px 2px 0",
+    fontSize: "12px",
+    color: "#fca5a5",
+    lineHeight: 1.4,
+  };
+
   return (
     <>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
@@ -366,7 +800,6 @@ export default function CompanyCreatePage() {
         .tf-toggle:hover { opacity: 0.85; }
       `}</style>
 
-      {/* Dark mode toggle */}
       <button
         className="tf-toggle"
         onClick={() => setDark(!dark)}
@@ -387,8 +820,6 @@ export default function CompanyCreatePage() {
         <Blobs dark={dark} />
 
         <div className="tf-card" style={cardStyle}>
-
-          {/* Logo */}
           <div style={{ display: "flex", alignItems: "center", gap: "10px", marginBottom: "36px" }}>
             <img
               src="https://www.logoai.com/uploads/icon/2021/08/06/732ca933-7df8-43e8-b085-69466243c919.png"
@@ -400,7 +831,6 @@ export default function CompanyCreatePage() {
             </span>
           </div>
 
-          {/* Heading */}
           <div style={{ marginBottom: "32px" }}>
             <h1 style={{
               margin: "0 0 6px",
@@ -412,12 +842,11 @@ export default function CompanyCreatePage() {
               lineHeight: 1.1,
               transition: "color 0.3s",
             }}>
-              Şirketini oluştur.
+              Sirketini olustur.
             </h1>
           </div>
 
-          {/* Ödeme uyarısı */}
-          {!isPaymentSuccess && (
+          {shouldShowRegistrationForm && (
             <div style={{
               display: "flex", gap: "10px",
               background: "rgba(251,191,36,0.07)",
@@ -430,99 +859,210 @@ export default function CompanyCreatePage() {
                 <circle cx="8" cy="11.5" r=".75" fill="#fbbf24" />
               </svg>
               <p style={{ fontSize: "13px", color: "rgba(251,191,36,0.8)", margin: 0, lineHeight: 1.5 }}>
-                Bu sayfa normalde ödeme başarısından sonra açılır.
+                Sirket ve yonetici bilgilerini tamamlayarak kaydi bitirebilirsiniz.
               </p>
             </div>
           )}
 
-          {/* Şirket */}
-          <p style={{
-            fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-            color: sectionLabelColor, margin: "0 0 14px",
-            display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
-          }}>
-            Şirket Bilgileri
-            <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
-          </p>
-          <div style={{ display: "grid", gap: "14px", marginBottom: "28px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                Şirket adı
-              </label>
-              <input className={inputFocusClass} type="text" value={companyName} onChange={(e) => setCompanyName(e.target.value)} placeholder="Örnek: TaskFlow Labs" style={inputStyle} />
+          {isLegacyPaymentFlowEnabled && !resolvedPlan && !resolvedSlug && (
+            <div
+              style={{
+                background: dark ? "rgba(19,236,200,0.08)" : "rgba(13,140,110,0.08)",
+                border: dark ? "1px solid rgba(19,236,200,0.2)" : "1px solid rgba(13,140,110,0.2)",
+                borderRadius: "12px",
+                padding: "12px 14px",
+                marginBottom: "18px",
+              }}
+            >
+              <p style={{ margin: "0 0 10px", fontSize: "13px", lineHeight: 1.5, color: dark ? "#b7f7ea" : "#0d1b19" }}>
+                Plan bilgisi bulunamadi. Lutfen planinizi secin.
+              </p>
+              <select
+                className={inputFocusClass}
+                value={selectedPlanName}
+                disabled={isPlansLoading}
+                onChange={(event) => {
+                  setSelectedPlanName(event.target.value);
+                }}
+                style={{ ...inputStyle, appearance: "none", backgroundImage: "none" }}
+              >
+                <option value="">{isPlansLoading ? "Planlar yukleniyor..." : "Plan secin"}</option>
+                {availablePlans.map((item) => (
+                  <option key={item.planName} value={item.planName}>
+                    {item.planName} - {item.planPrice <= 0 ? "Ucretsiz" : `${formatPlanPrice(item.planPrice)}/ay`}
+                  </option>
+                ))}
+              </select>
             </div>
-          </div>
+          )}
 
-          {/* Yönetici */}
-          <p style={{
-            fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
-            color: sectionLabelColor, margin: "0 0 14px",
-            display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
-          }}>
-            Yönetici Bilgileri
-            <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
-          </p>
-          <div style={{ display: "grid", gap: "14px", marginBottom: "32px" }}>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                Ad soyad
-              </label>
-              <input className={inputFocusClass} type="text" value={adminName} onChange={(e) => setAdminName(e.target.value)} placeholder="Örnek: Emre Uçbudak" style={inputStyle} />
+          {isLegacyPaymentFlowEnabled && !shouldShowRegistrationForm && isPaymentCancel && (
+            <div style={{
+              display: "grid",
+              gap: "12px",
+              background: "rgba(251,191,36,0.07)",
+              border: "1px solid rgba(251,191,36,0.2)",
+              borderRadius: "12px",
+              padding: "12px 14px",
+              marginBottom: "18px",
+            }}>
+              <p style={{ margin: 0, fontSize: "13px", lineHeight: 1.5, color: dark ? "#fde68a" : "#92400e" }}>
+                Odeme iptal edildi. Aboneligi tamamlamak icin odemeyi tekrar baslatabilirsiniz.
+              </p>
+              <button
+                type="button"
+                className="tf-btn"
+                disabled={isLoading || !effectivePlan}
+                onClick={() => {
+                  if (!effectivePlan) {
+                    setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
+                    return;
+                  }
+                  setIsLoading(true);
+                  void startStripeCheckout({
+                    companyIdValue: paymentCompanyId,
+                    planName: effectivePlan,
+                    planSlug: effectiveSlug,
+                  }).then((started) => {
+                    if (!started) setIsLoading(false);
+                  });
+                }}
+                style={{
+                  background: isLoading ? "rgba(255,255,255,0.08)" : "linear-gradient(135deg, #13ecc8 0%, #0ab89f 100%)",
+                  color: "#0a0f0e",
+                }}
+              >
+                Odemeyi Tekrar Baslat
+              </button>
             </div>
-            <div>
-              <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                E-posta
-              </label>
-              <input className={inputFocusClass} type="email" value={adminEmail} onChange={(e) => setAdminEmail(e.target.value)} placeholder="ornek@mail.com" style={inputStyle} />
-            </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                  Şifre
-                </label>
-                <input className={inputFocusClass} type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
-                  Şifre tekrar
-                </label>
-                <input className={inputFocusClass} type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="••••••••" style={inputStyle} />
-              </div>
-            </div>
-          </div>
+          )}
 
-          {/* Buton */}
-          <button
-            type="button"
-            className="tf-btn"
-            onClick={() => void handleCreate()}
-            disabled={isLoading}
-            style={{
-              background: isLoading
-                ? dark ? "rgba(255,255,255,0.06)" : "rgba(13,27,25,0.08)"
-                : "linear-gradient(135deg, #13ecc8 0%, #0ab89f 100%)",
-              color: isLoading
-                ? dark ? "rgba(255,255,255,0.3)" : "rgba(13,27,25,0.3)"
-                : "#0a0f0e",
-            }}
+          {shouldShowRegistrationForm && (
+            <form
+            onSubmit={handleSubmit((values) => {
+              void handleCreate(values);
+            })}
           >
-            {isLoading ? (
-              <>
-                <span style={{
-                  width: "16px", height: "16px", borderRadius: "50%",
-                  border: "2px solid rgba(255,255,255,0.15)",
-                  borderTopColor: "rgba(255,255,255,0.5)",
-                  animation: "spin 0.7s linear infinite",
-                  display: "inline-block",
-                }} />
-                Oluşturuluyor…
-              </>
-            ) : (
-              "Hesabı Oluştur →"
-            )}
-          </button>
+            <p style={{
+              fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+              color: sectionLabelColor, margin: "0 0 14px",
+              display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
+            }}>
+              Sirket Bilgileri
+              <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
+            </p>
+            <div style={{ display: "grid", gap: "14px", marginBottom: "28px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                  Sirket adi
+                </label>
+                <input
+                  className={inputFocusClass}
+                  type="text"
+                  placeholder="Ornek: TaskFlow Labs"
+                  style={inputStyle}
+                  {...register("companyName")}
+                />
+                {errors.companyName?.message && <p style={fieldErrorStyle}>{errors.companyName.message}</p>}
+              </div>
+            </div>
 
-          {/* Hata */}
+            <p style={{
+              fontSize: "10px", fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase",
+              color: sectionLabelColor, margin: "0 0 14px",
+              display: "flex", alignItems: "center", gap: "8px", transition: "color 0.3s",
+            }}>
+              Yonetici Bilgileri
+              <span style={{ flex: 1, height: "1px", background: sectionLabelLineColor, display: "block", transition: "background 0.3s" }} />
+            </p>
+            <div style={{ display: "grid", gap: "14px", marginBottom: "32px" }}>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                  Ad soyad
+                </label>
+                <input
+                  className={inputFocusClass}
+                  type="text"
+                  placeholder="Ornek: Emre Ucbudak"
+                  style={inputStyle}
+                  {...register("adminName")}
+                />
+                {errors.adminName?.message && <p style={fieldErrorStyle}>{errors.adminName.message}</p>}
+              </div>
+              <div>
+                <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                  E-posta
+                </label>
+                <input
+                  className={inputFocusClass}
+                  type="email"
+                  placeholder="ornek@mail.com"
+                  style={inputStyle}
+                  {...register("adminEmail")}
+                />
+                {errors.adminEmail?.message && <p style={fieldErrorStyle}>{errors.adminEmail.message}</p>}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px" }}>
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                    Sifre
+                  </label>
+                  <input
+                    className={inputFocusClass}
+                    type="password"
+                    placeholder="********"
+                    style={inputStyle}
+                    {...register("password")}
+                  />
+                  {errors.password?.message && <p style={fieldErrorStyle}>{errors.password.message}</p>}
+                </div>
+                <div>
+                  <label style={{ display: "block", fontSize: "11px", fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: labelColor, marginBottom: "7px", transition: "color 0.3s" }}>
+                    Sifre tekrar
+                  </label>
+                  <input
+                    className={inputFocusClass}
+                    type="password"
+                    placeholder="********"
+                    style={inputStyle}
+                    {...register("confirmPassword")}
+                  />
+                  {errors.confirmPassword?.message && <p style={fieldErrorStyle}>{errors.confirmPassword.message}</p>}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="tf-btn"
+              disabled={isLoading}
+              style={{
+                background: isLoading
+                  ? dark ? "rgba(255,255,255,0.06)" : "rgba(13,27,25,0.08)"
+                  : "linear-gradient(135deg, #13ecc8 0%, #0ab89f 100%)",
+                color: isLoading
+                  ? dark ? "rgba(255,255,255,0.3)" : "rgba(13,27,25,0.3)"
+                  : "#0a0f0e",
+              }}
+            >
+              {isLoading ? (
+                <>
+                  <span style={{
+                    width: "16px", height: "16px", borderRadius: "50%",
+                    border: "2px solid rgba(255,255,255,0.15)",
+                    borderTopColor: "rgba(255,255,255,0.5)",
+                    animation: "spin 0.7s linear infinite",
+                    display: "inline-block",
+                  }} />
+                  Olusturuluyor...
+                </>
+              ) : (
+                "Hesabi Olustur"
+              )}
+            </button>
+            </form>
+          )}
+
           {errorMessage && (
             <div style={{
               display: "flex", gap: "10px",
@@ -538,7 +1078,6 @@ export default function CompanyCreatePage() {
             </div>
           )}
 
-          {/* Başarı */}
           {successMessage && (
             <div style={{
               display: "flex", gap: "10px",
@@ -558,3 +1097,5 @@ export default function CompanyCreatePage() {
     </>
   );
 }
+
+
