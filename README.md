@@ -1,73 +1,85 @@
-# React + TypeScript + Vite
+﻿# TaskFlow Web Page
+TaskFlow Web Page, TaskFlow platformu için hazırlanmış React tabanlı tanıtım ve şirket kayıt/abonelik akışını yöneten web uygulamasıdır.
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Özellikler
+- Landing sayfasında ürün tanıtımı, özellik kartları, fiyat planları ve SSS bölümleri.
+- Plan seçimine göre Stripe ödeme oturumu başlatma akışı.
+- Ödeme sonrası şirket ve yönetici oluşturma formu.
+- Şirket planlarını API'den dinamik çekme (fallback planlar ile).
+- API hata cevaplarını normalize edip kullanıcı dostu Türkçe hata mesajlarına dönüştürme.
+- Route yönetimi (`react-router-dom`) ve form doğrulama (`react-hook-form` + `zod`).
 
-Currently, two official plugins are available:
+## Sayfalar ve Akış
+- `/`
+  Landing sayfası. Planlar listelenir ve kullanıcı plan seçerek ödeme akışına gider.
+- `/checkout`
+  Seçilen plan için Stripe ödeme bağlantısına yönlendirir.
+- `/company/create`
+  Ödeme başarılıysa abonelik aktivasyonu ve şirket/yönetici kayıt sürecini yönetir.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## Teknoloji Yığını
+- React 19
+- TypeScript
+- Vite 7
+- React Router DOM 7
+- React Hook Form + Zod
+- Tailwind CSS 4 (Vite eklentisi ile)
+- ESLint 9
 
-## React Compiler
+## Kurulum
+1. Bağımlılıkları yükleyin:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+2. Ortam değişkenlerini ayarlayın (`.env`):
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```env
+VITE_TASKFLOW_API_URL=http://localhost:8080
+VITE_STRIPE_PAYMENT_LINK_STARTUP=https://...
+VITE_STRIPE_PAYMENT_LINK_BUSINESS=https://...
+VITE_STRIPE_PAYMENT_LINK_ENTERPRISE=https://...
 ```
+
+3. Geliştirme sunucusunu başlatın:
+
+```bash
+npm run dev
+```
+
+## Scriptler
+- `npm run dev`: Geliştirme sunucusunu başlatır.
+- `npm run build`: TypeScript build + Vite production build.
+- `npm run preview`: Production build önizleme.
+- `npm run lint`: ESLint kontrolü.
+
+## API Uçları (Uygulamada Kullanılan)
+- `GET /api/Tenant/CompanyPlans`
+- `POST /api/Tenant/CreateStripeCheckoutSessionRequest`
+- `POST /api/Identity/CreateCompanyCommandRequest`
+- `POST /api/Identity/RegisterCommandRequest`
+- `POST /api/Tenant/ActivateCompanySubscriptionRequest`
+
+Not: `vite.config.ts` içinde `/api` istekleri `VITE_TASKFLOW_API_URL` değerine proxy edilir.
+
+## Proje Yapısı
+```text
+src/
+  pages/
+    LandingPage.tsx
+    CheckoutPage.tsx
+    CompanyCreatePage.tsx
+  shared/
+    errors/
+      api.ts
+      mappers.ts
+      messages.ts
+  App.tsx
+  main.tsx
+```
+
+## Geliştirme Notları
+- Ödeme akışında geçici plan bilgileri `localStorage` içinde tutulur.
+- API'den dönen farklı payload formatları parse edilerek normalize edilir.
+- Şirket oluşturma ve abonelik aktivasyon adımlarında detaylı hata eşleme yapılır.
