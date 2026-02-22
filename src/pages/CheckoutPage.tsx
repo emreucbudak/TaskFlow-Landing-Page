@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { checkoutMessages } from "../shared/errors/messages";
 
 type CheckoutQuery = {
   plan: string;
@@ -138,10 +139,10 @@ export default function CheckoutPage() {
 
   const statusMessage = useMemo(() => {
     if (status === "success") {
-      return "Odeme basarili. Sirket olusturma adimina yonlendiriliyorsun.";
+      return checkoutMessages.paymentSuccess;
     }
     if (status === "cancel") {
-      return "Odeme iptal edildi. Istedigin zaman tekrar deneyebilirsin.";
+      return checkoutMessages.paymentCanceled;
     }
     return "";
   }, [status]);
@@ -168,7 +169,7 @@ export default function CheckoutPage() {
     const paymentLink = getStripePaymentLink(planSlug);
 
     if (!isHttpUrl(paymentLink)) {
-      setErrorMessage(`"${plan}" plani icin Stripe Payment Link tanimli degil.`);
+      setErrorMessage(checkoutMessages.paymentLinkMissing(plan));
       setIsLoading(false);
       return;
     }

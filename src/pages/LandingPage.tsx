@@ -1,5 +1,6 @@
 ﻿import { useEffect, useState, type CSSProperties } from "react";
 
+
 const features = [
   {
     icon: "bar_chart",
@@ -42,6 +43,57 @@ type PricingPlanCard = {
   popular: boolean;
 };
 
+type StripeCheckoutSessionResponse = {
+  checkoutUrl?: string;
+  CheckoutUrl?: string;
+  message?: string;
+  detail?: string;
+};
+
+const PLAN_SELECT_CTA = "Plan Se\u00E7";
+
+const fixMojibakeText = (value: string) => {
+  const replacements: Array<[string, string]> = [
+    ["Ã§", "ç"],
+    ["Ã‡", "Ç"],
+    ["Ã¶", "ö"],
+    ["Ã–", "Ö"],
+    ["Ã¼", "ü"],
+    ["Ãœ", "Ü"],
+    ["Ä±", "ı"],
+    ["Ä°", "İ"],
+    ["ÄŸ", "ğ"],
+    ["Äž", "Ğ"],
+    ["ÅŸ", "ş"],
+    ["Åž", "Ş"],
+    ["â‚º", "₺"],
+    ["kullan�c�", "kullanıcı"],
+    ["tak�m", "takım"],
+    ["g�rev", "görev"],
+    ["�� raporlama", "İç raporlama"],
+    ["i� raporlama", "iç raporlama"],
+    ["B�y�yen", "Büyüyen"],
+    ["ba�layan", "başlayan"],
+    ["k���k", "küçük"],
+    ["B�y�k", "Büyük"],
+    ["kurulu�lar", "kuruluşlar"],
+    ["�zelle�tirilmi�", "özelleştirilmiş"],
+    ["s�re�lerinizi", "süreçlerinizi"],
+    ["i�in", "için"],
+    ["Y�ksek", "Yüksek"],
+    ["�l�ekli", "ölçekli"],
+    ["�irketler", "şirketler"],
+    ["kapsaml�", "kapsamlı"],
+    ["��z�m", "çözüm"],
+  ];
+
+  let normalized = value;
+  for (const [wrong, correct] of replacements) {
+    normalized = normalized.replaceAll(wrong, correct);
+  }
+  return normalized;
+};
+
 const fallbackPricingPlans: PricingPlanCard[] = [
   {
     name: "Start-up",
@@ -50,7 +102,7 @@ const fallbackPricingPlans: PricingPlanCard[] = [
     period: "/ay",
     description: "Yeni başlayan küçük ekipler için ideal.",
     features: ["5 kullanıcıya kadar", "1 takım limiti", "100 bireysel görev limiti", "İç raporlama dahil"],
-    cta: "Plan Seç",
+    cta: PLAN_SELECT_CTA,
     popular: false,
   },
   {
@@ -60,7 +112,7 @@ const fallbackPricingPlans: PricingPlanCard[] = [
     period: "/ay",
     description: "Daha fazla güce ihtiyaç duyan büyüyen ekipler için.",
     features: ["25 kullanıcıya kadar", "5 takım limiti", "1000 bireysel görev limiti", "İç raporlama dahil"],
-    cta: "Plan Seç",
+    cta: PLAN_SELECT_CTA,
     popular: true,
   },
   {
@@ -70,7 +122,7 @@ const fallbackPricingPlans: PricingPlanCard[] = [
     period: "/ay",
     description: "Büyük kuruluşlar için özelleştirilmiş çözümler.",
     features: ["1000 kullanıcıya kadar", "50 takım limiti", "10000 bireysel görev limiti", "İç raporlama dahil"],
-    cta: "Plan Seç",
+    cta: PLAN_SELECT_CTA,
     popular: false,
   },
 ];
@@ -100,7 +152,7 @@ const toPricingPlan = (plan: ApiCompanyPlan, index: number): PricingPlanCard => 
     `${plan.planProperties.individualTaskLimit} bireysel görev limiti`,
     plan.planProperties.isInternalReportingEnabled ? "İç raporlama dahil" : "İç raporlama yok",
   ],
-  cta: "Plan Seç",
+  cta: PLAN_SELECT_CTA,
   popular: false,
 });
 
@@ -170,20 +222,14 @@ const buildPlansUrl = (baseUrl: string) =>
   `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
 
 const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
-const isHttpUrl = (value: string) => /^https?:\/\//i.test(value);
-const pendingPlanStorageKey = "taskflow_pending_plan_checkout";
-
-type PendingPlanSelection = {
-  planName: string;
-  planSlug: string;
-  createdAt: number;
-};
+const buildApiUrl = (baseUrl: string, endpointPath: string) =>
+  baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
 
 const getApiBaseUrlCandidates = (): string[] => {
   const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
-  return [envBaseUrl, "http://localhost:5172", "https://localhost:7243", "http://localhost:8080", "https://localhost:8081"]
+  return ["", envBaseUrl, "http://localhost:5172", "https://localhost:7243", "http://localhost:8080", "https://localhost:8081"]
     .map((url) => normalizeBaseUrl(url))
-    .filter((url, index, arr) => Boolean(url) && arr.indexOf(url) === index);
+    .filter((url, index, arr) => arr.indexOf(url) === index);
 };
 
 const normalizePlanText = (value: string) =>
@@ -197,46 +243,27 @@ const getPlanSlug = (planName: string) => {
   return normalized.replace(/\s+/g, "-");
 };
 
-const getStripePaymentLink = (planSlug: string): string => {
-  const env = import.meta.env as Record<string, string | undefined>;
-  const staticMap: Record<string, string | undefined> = {
-    startup: env.VITE_STRIPE_PAYMENT_LINK_STARTUP,
-    business: env.VITE_STRIPE_PAYMENT_LINK_BUSINESS,
-    enterprise: env.VITE_STRIPE_PAYMENT_LINK_ENTERPRISE,
-  };
-  const dynamicKey = `VITE_STRIPE_PAYMENT_LINK_${planSlug.replace(/[^a-z0-9]/gi, "_").toUpperCase()}`;
-  return (staticMap[planSlug] ?? env[dynamicKey] ?? "").trim();
-};
+const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
 
-const savePendingPlanSelection = (planName: string, planSlug: string) => {
+const saveStripePostCheckoutRedirect = (returnUrl: string) => {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(pendingPlanStorageKey, JSON.stringify({ planName, planSlug, createdAt: Date.now() }));
-  } catch { /* ignore */ }
+    window.localStorage.setItem(
+      stripePostCheckoutRedirectStorageKey,
+      JSON.stringify({ returnUrl, createdAt: Date.now() })
+    );
+  } catch {
+    // ignore storage errors
+  }
 };
 
-const readPendingPlanSelection = (): PendingPlanSelection | null => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(pendingPlanStorageKey);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as Partial<PendingPlanSelection>;
-    if (typeof parsed.planName !== "string" || typeof parsed.planSlug !== "string") return null;
-    return { planName: parsed.planName, planSlug: parsed.planSlug, createdAt: typeof parsed.createdAt === "number" ? parsed.createdAt : 0 };
-  } catch { return null; }
-};
-
-const clearPendingPlanSelection = () => {
+const clearStripePostCheckoutRedirect = () => {
   if (typeof window === "undefined") return;
-  try { window.localStorage.removeItem(pendingPlanStorageKey); } catch { /* ignore */ }
-};
-
-const buildCompanyCreateUrl = (planName: string, planSlug: string) => {
-  const params = new URLSearchParams();
-  params.set("payment", "success");
-  if (planName) params.set("plan", planName);
-  if (planSlug) params.set("slug", planSlug);
-  return `/company/create?${params.toString()}`;
+  try {
+    window.localStorage.removeItem(stripePostCheckoutRedirectStorageKey);
+  } catch {
+    // ignore storage errors
+  }
 };
 
 const trustedBy = [
@@ -442,7 +469,7 @@ const PhoneMockup = () => (
 const faqItems = [
   {
     q: "TaskFlow'u kullanmaya başlamak için ne yapmam gerekiyor?",
-    a: "Bir plan seçip ödemeyi tamamladıktan sonra şirket hesabınızı oluşturmanız yeterli. Kurulum birkaç dakika sürer, teknik bilgi gerekmez.",
+    a: "Bir plan seçip ödemeyi tamamlamanız yeterli. Ödeme başarılı olduğunda kayıt sayfasına yönlendirilirsiniz.",
   },
   {
     q: "Planımı sonradan değiştirebilir miyim?",
@@ -547,42 +574,79 @@ export default function TaskFlowLanding() {
   const cardBg = dark ? "#1a3632" : "#ffffff";
   const border = dark ? "rgba(76,154,141,.2)" : "rgba(76,154,141,.15)";
   const subText = dark ? "#9ca3af" : "rgba(13,27,25,.6)";
+  const isCheckoutLoading = loadingPlanName !== null;
   const queryParams = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
   const paymentStatus = queryParams?.get("payment") ?? queryParams?.get("status") ?? "";
-  const paymentPlanFromQuery = queryParams?.get("plan") ?? "";
-  const paymentSlugFromQuery = queryParams?.get("slug") ?? "";
-  const isCheckoutLoading = loadingPlanName !== null;
 
   useEffect(() => {
-    if (paymentStatus !== "success") return;
-    const pending = readPendingPlanSelection();
-    const resolvedPlan = paymentPlanFromQuery || pending?.planName || "";
-    const resolvedSlug = paymentSlugFromQuery || pending?.planSlug || (resolvedPlan ? getPlanSlug(resolvedPlan) : "");
-    clearPendingPlanSelection();
-    window.location.replace(buildCompanyCreateUrl(resolvedPlan, resolvedSlug));
-  }, [paymentStatus, paymentPlanFromQuery, paymentSlugFromQuery]);
-
-  const handlePlanSelect = (plan: PricingPlanCard) => {
-    if (isCheckoutLoading) return;
-    const planSlug = getPlanSlug(plan.name);
-    if (plan.amount <= 0) {
-      const params = new URLSearchParams();
-      params.set("payment", "success");
-      params.set("plan", plan.name);
-      params.set("slug", planSlug);
-      window.location.assign(`/company/create?${params.toString()}`);
-      return;
+    if (paymentStatus === "cancel" || paymentStatus === "success") {
+      clearStripePostCheckoutRedirect();
     }
+  }, [paymentStatus]);
+
+  const handlePlanSelect = async (plan: PricingPlanCard) => {
+    if (isCheckoutLoading) return;
+
+    const planSlug = getPlanSlug(plan.name);
     setLoadingPlanName(plan.name);
     setCheckoutError("");
-    const paymentLink = getStripePaymentLink(planSlug);
-    if (!isHttpUrl(paymentLink)) {
-      setCheckoutError(`"${plan.name}" planı için Stripe Payment Link tanımlı değil.`);
-      setLoadingPlanName(null);
-      return;
+
+    const createCheckoutPath = "/api/Tenant/CreateStripeCheckoutSessionRequest";
+    const successParams = new URLSearchParams();
+    successParams.set("payment", "success");
+    successParams.set("plan", plan.name);
+    successParams.set("slug", planSlug);
+    const successUrl = `${window.location.origin}/company/create?${successParams.toString()}`;
+    const cancelParams = new URLSearchParams();
+    cancelParams.set("payment", "cancel");
+    cancelParams.set("plan", plan.name);
+    cancelParams.set("slug", planSlug);
+    const cancelUrl = `${window.location.origin}/?${cancelParams.toString()}`;
+
+    let lastError = "Stripe odeme oturumu baslatilamadi. Lutfen tekrar deneyin.";
+    for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+      try {
+        const response = await fetch(buildApiUrl(apiBaseUrl, createCheckoutPath), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            planName: plan.name,
+            planSlug,
+            successUrl,
+            cancelUrl,
+          }),
+        });
+
+        const raw = await response.text();
+        const payload = (() => {
+          try {
+            return JSON.parse(raw) as StripeCheckoutSessionResponse;
+          } catch {
+            return {} as StripeCheckoutSessionResponse;
+          }
+        })();
+
+        if (!response.ok) {
+          lastError = payload.detail?.trim() || payload.message?.trim() || `Odeme baslatilamadi (HTTP ${response.status}).`;
+          continue;
+        }
+
+        const checkoutUrl = payload.checkoutUrl ?? payload.CheckoutUrl ?? "";
+        if (!checkoutUrl) {
+          lastError = "Stripe yonlendirme baglantisi olusturulamadi. Lutfen tekrar deneyin.";
+          continue;
+        }
+
+        saveStripePostCheckoutRedirect(successUrl);
+        window.location.assign(checkoutUrl);
+        return;
+      } catch {
+        lastError = "Sunucuya ulasilamadi. Baglantinizi kontrol edip tekrar deneyin.";
+      }
     }
-    savePendingPlanSelection(plan.name, planSlug);
-    window.location.assign(paymentLink);
+
+    setCheckoutError(lastError);
+    setLoadingPlanName(null);
   };
 
   return (
@@ -614,7 +678,6 @@ export default function TaskFlowLanding() {
               </div>
               <span style={{ fontWeight: 800, fontSize: "18px" }}>TaskFlow</span>
             </div>
-            <a href="/auth/login" style={{ color: "#13ecc8", fontWeight: 700, fontSize: "14px", textDecoration: "none" }}>Giriş Yap</a>
           </div>
         </nav>
 
@@ -692,7 +755,7 @@ export default function TaskFlowLanding() {
               <p style={{ color: subText }}>Ekibinizin büyüklüğüne ve ihtiyaçlarına en uygun planı seçin.</p>
               {paymentStatus === "cancel" && !checkoutError && (
                 <p style={{ margin: "14px 0 0", color: "#92400e", fontSize: "13px" }}>
-                  Ödeme işlemi iptal edildi. Dilersen plan seçip tekrar deneyebilirsin.
+                  Odeme iptal edildi. Dilediginiz zaman tekrar deneyebilirsiniz.
                 </p>
               )}
               {checkoutError && (
@@ -713,18 +776,20 @@ export default function TaskFlowLanding() {
                     <div style={{ position: "absolute", top: 0, right: 0, background: "#13ecc8", color: "#0d1b19", fontSize: "11px", fontWeight: 700, padding: "4px 12px", borderBottomLeftRadius: "12px" }}>POPÜLER</div>
                   )}
                   <div style={{ marginBottom: "24px" }}>
-                    <h3 style={{ fontWeight: 700, fontSize: "17px", color: plan.popular ? "#fff" : text, margin: "0 0 12px" }}>{plan.name}</h3>
+                    <h3 style={{ fontWeight: 700, fontSize: "17px", color: plan.popular ? "#fff" : text, margin: "0 0 12px" }}>{fixMojibakeText(plan.name)}</h3>
                     <div style={{ display: "flex", alignItems: "baseline", gap: "4px" }}>
-                      <span style={{ fontSize: "2.4rem", fontWeight: 900, color: plan.popular ? "#fff" : text }}>{plan.price}</span>
-                      {plan.period && <span style={{ color: "#9ca3af" }}>{plan.period}</span>}
+                      <span style={{ fontSize: "2.4rem", fontWeight: 900, color: plan.popular ? "#fff" : text }}>{fixMojibakeText(plan.price)}</span>
+                      {plan.period && <span style={{ color: "#9ca3af" }}>{fixMojibakeText(plan.period)}</span>}
                     </div>
-                    <p style={{ color: plan.popular ? "#d1d5db" : subText, fontSize: "13px", margin: "8px 0 0" }}>{plan.description}</p>
+                    <p style={{ color: plan.popular ? "#d1d5db" : subText, fontSize: "13px", margin: "8px 0 0" }}>{fixMojibakeText(plan.description)}</p>
                   </div>
                   <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: "12px", marginBottom: "24px" }}>
                     {plan.features.map(feat => (
                       <div key={feat} style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-                        <Icon name={plan.popular ? "check_circle" : "check"} style={{ color: "#13ecc8", fontSize: "20px" }} />
-                        <span style={{ fontSize: "14px", color: plan.popular ? "#fff" : text }}>{feat}</span>
+                        <span style={{ color: "#13ecc8", fontSize: "20px", lineHeight: 1, fontWeight: 700 }} aria-hidden>
+                          ✓
+                        </span>
+                        <span style={{ fontSize: "14px", color: plan.popular ? "#fff" : text }}>{fixMojibakeText(feat)}</span>
                       </div>
                     ))}
                   </div>
@@ -737,7 +802,7 @@ export default function TaskFlowLanding() {
                     boxShadow: plan.popular ? "0 4px 16px rgba(19,236,200,.25)" : "none",
                     opacity: isCheckoutLoading && loadingPlanName !== plan.name ? 0.6 : 1,
                   }}>
-                    {loadingPlanName === plan.name ? "Yönlendiriliyor..." : plan.cta}
+                    {fixMojibakeText(plan.cta)}
                   </button>
                 </div>
               ))}
@@ -783,7 +848,10 @@ export default function TaskFlowLanding() {
         <footer style={{ padding: "24px 16px", borderTop: `1px solid ${dark ? "#1f2937" : "#e5e7eb"}` }}>
           <div style={{ maxWidth: "1280px", margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: "12px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: 700 }}>
-              <Icon name="task_alt" style={{ color: "#4c9a8d" }} /> TaskFlow
+              <div style={{ width: "32px", height: "32px", borderRadius: "8px", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <img src="https://www.logoai.com/uploads/icon/2021/08/06/732ca933-7df8-43e8-b085-69466243c919.png" alt="TaskFlow logo" style={{ width: "26px", height: "26px", objectFit: "contain", display: "block" }} />
+              </div>
+              <span>TaskFlow</span>
             </div>
             <span style={{ color: "#9ca3af", fontSize: "13px" }}>© 2026 TaskFlow Inc. Tüm hakları saklıdır.</span>
           </div>
@@ -793,3 +861,4 @@ export default function TaskFlowLanding() {
     </>
   );
 }
+
