@@ -265,10 +265,8 @@ export default function CompanyCreatePage() {
   });
 
   const paymentCompanyId = companyId.trim();
-  const isPaymentSuccess = payment === "success";
   const isPaymentCancel = payment === "cancel";
   const isLegacyPaymentFlowEnabled = payment === "legacy";
-  const hasPaymentCompanyId = guidRegex.test(paymentCompanyId);
   const resolvedPlan = plan.trim() || pendingPlan?.planName?.trim() || "";
   const resolvedSlug = slug.trim() || pendingPlan?.planSlug?.trim() || "";
   const effectivePlan = resolvedPlan || selectedPlanName.trim();
@@ -329,6 +327,7 @@ export default function CompanyCreatePage() {
     successParams.set("companyId", companyIdValue);
     if (planName) successParams.set("plan", planName);
     if (planSlug) successParams.set("slug", planSlug);
+    successParams.set("session_id", "{CHECKOUT_SESSION_ID}");
 
     const cancelParams = new URLSearchParams();
     cancelParams.set("payment", "cancel");
@@ -336,8 +335,8 @@ export default function CompanyCreatePage() {
     if (planName) cancelParams.set("plan", planName);
     if (planSlug) cancelParams.set("slug", planSlug);
 
-    const successUrl = `${window.location.origin}/company/create?${successParams.toString()}`;
-    const cancelUrl = `${window.location.origin}/company/create?${cancelParams.toString()}`;
+    const successUrl = `${window.location.origin}/subscription/payment-success?${successParams.toString()}`;
+    const cancelUrl = `${window.location.origin}/subscription/payment-success?${cancelParams.toString()}`;
 
     let lastError: string = companyCreateErrorMessages.genericActionFailed;
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
@@ -346,6 +345,7 @@ export default function CompanyCreatePage() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            companyId: companyIdValue,
             planName: planName || undefined,
             planSlug: planSlug || undefined,
             successUrl,
@@ -398,90 +398,6 @@ export default function CompanyCreatePage() {
     setErrorMessage(lastError);
     return false;
   };
-
-  useEffect(() => {
-    if (!isPaymentSuccess || !hasPaymentCompanyId) return;
-    if (!effectivePlan && !effectiveSlug) {
-      setErrorMessage(companyCreateErrorMessages.paymentPlanMissing);
-      return;
-    }
-
-    let isMounted = true;
-    const activatePaidSubscription = async () => {
-      setIsLoading(true);
-      setErrorMessage("");
-      setSuccessMessage("");
-
-      const activateSubscriptionPath = "/api/Tenant/ActivateCompanySubscriptionRequest";
-      let lastError: string = companyCreateErrorMessages.genericActionFailed;
-
-      for (const apiBaseUrl of getApiBaseUrlCandidates()) {
-        try {
-          const activateResponse = await fetch(buildApiUrl(apiBaseUrl, activateSubscriptionPath), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              companyId: paymentCompanyId,
-              planName: effectivePlan || undefined,
-              planSlug: effectiveSlug || undefined,
-            }),
-          });
-
-          const activateRaw = await activateResponse.text();
-          const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
-
-          if (!activateResponse.ok) {
-            const activateError = extractApiError({
-              payload: activatePayload,
-              raw: activateRaw,
-              statusCode: activateResponse.status,
-              fallback: companyCreateErrorMessages.subscriptionActivationFailed,
-              statusCodeMap: {
-                401: "unauthorized",
-                404: "resource not found",
-                409: "already exists",
-                429: "too many requests",
-              },
-            });
-
-            const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
-            if (activateResponse.status < 500) {
-              if (isMounted) {
-                setErrorMessage(friendlyError);
-                setIsLoading(false);
-              }
-              return;
-            }
-            lastError = friendlyError;
-            continue;
-          }
-
-          clearPendingPlanSelection();
-          if (isMounted) {
-            setSuccessMessage("Odeme basariyla dogrulandi. Aboneliginiz aktif edildi, sirket olusturma sayfasina yonlendiriliyorsunuz.");
-            setTimeout(() => { window.location.href = "/company/create"; }, 1200);
-          }
-          return;
-        } catch (error) {
-          if (error instanceof Error && error.message) {
-            lastError = toFriendlyCompanyCreateError(error.message);
-          } else {
-            lastError = companyCreateErrorMessages.networkUnavailable;
-          }
-        }
-      }
-
-      if (isMounted) {
-        setErrorMessage(lastError);
-        setIsLoading(false);
-      }
-    };
-
-    void activatePaidSubscription();
-    return () => {
-      isMounted = false;
-    };
-  }, [isPaymentSuccess, hasPaymentCompanyId, paymentCompanyId, effectivePlan, effectiveSlug]);
 
   const handleCreate = async ({
     companyName,

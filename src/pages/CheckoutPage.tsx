@@ -7,6 +7,8 @@ type CheckoutQuery = {
   period: string;
   slug: string;
   status: string;
+  companyId: string;
+  sessionId: string;
 };
 
 const readQuery = (): CheckoutQuery => {
@@ -18,6 +20,8 @@ const readQuery = (): CheckoutQuery => {
     period: params.get("period") ?? "",
     slug: params.get("slug") ?? "",
     status: params.get("status") ?? params.get("payment") ?? "",
+    companyId: params.get("companyId") ?? "",
+    sessionId: params.get("session_id") ?? params.get("sessionId") ?? "",
   };
 };
 
@@ -104,12 +108,14 @@ const clearPendingPlanSelection = () => {
   }
 };
 
-const buildCompanyCreateUrl = (planName: string, planSlug: string) => {
+const buildPaymentSuccessUrl = (planName: string, planSlug: string, companyId: string, sessionId: string) => {
   const params = new URLSearchParams();
   params.set("payment", "success");
   if (planName) params.set("plan", planName);
   if (planSlug) params.set("slug", planSlug);
-  return `/company/create?${params.toString()}`;
+  if (companyId) params.set("companyId", companyId);
+  if (sessionId) params.set("session_id", sessionId);
+  return `/subscription/payment-success?${params.toString()}`;
 };
 
 const pageStyle: CSSProperties = {
@@ -132,7 +138,7 @@ const cardStyle: CSSProperties = {
 };
 
 export default function CheckoutPage() {
-  const { plan, price, period, slug, status } = useMemo(() => readQuery(), []);
+  const { plan, price, period, slug, status, companyId, sessionId } = useMemo(() => readQuery(), []);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const displayPrice = `${price}${period}`;
@@ -157,8 +163,8 @@ export default function CheckoutPage() {
     const resolvedSlug = slug || pending?.planSlug || (resolvedPlan ? getPlanSlug(resolvedPlan) : "");
 
     clearPendingPlanSelection();
-    window.location.replace(buildCompanyCreateUrl(resolvedPlan, resolvedSlug));
-  }, [status, plan, slug]);
+    window.location.replace(buildPaymentSuccessUrl(resolvedPlan, resolvedSlug, companyId, sessionId));
+  }, [status, plan, slug, companyId, sessionId]);
 
   const handleStripeCheckout = () => {
     if (isLoading) return;

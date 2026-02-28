@@ -243,6 +243,17 @@ const getPlanSlug = (planName: string) => {
   return normalized.replace(/\s+/g, "-");
 };
 
+const getStripePaymentLinkByPlan = (planSlug: string) => {
+  const startup = (import.meta.env.VITE_STRIPE_PAYMENT_LINK_STARTUP as string | undefined)?.trim() ?? "";
+  const business = (import.meta.env.VITE_STRIPE_PAYMENT_LINK_BUSINESS as string | undefined)?.trim() ?? "";
+  const enterprise = (import.meta.env.VITE_STRIPE_PAYMENT_LINK_ENTERPRISE as string | undefined)?.trim() ?? "";
+
+  if (planSlug === "startup") return startup;
+  if (planSlug === "business") return business;
+  if (planSlug === "enterprise") return enterprise;
+  return "";
+};
+
 const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
 
 const saveStripePostCheckoutRedirect = (returnUrl: string) => {
@@ -588,6 +599,7 @@ export default function TaskFlowLanding() {
     if (isCheckoutLoading) return;
 
     const planSlug = getPlanSlug(plan.name);
+    const stripePaymentLink = getStripePaymentLinkByPlan(planSlug);
     setLoadingPlanName(plan.name);
     setCheckoutError("");
 
@@ -596,12 +608,19 @@ export default function TaskFlowLanding() {
     successParams.set("payment", "success");
     successParams.set("plan", plan.name);
     successParams.set("slug", planSlug);
-    const successUrl = `${window.location.origin}/company/create?${successParams.toString()}`;
+    successParams.set("session_id", "{CHECKOUT_SESSION_ID}");
+    const successUrl = `${window.location.origin}/subscription/payment-success?${successParams.toString()}`;
     const cancelParams = new URLSearchParams();
     cancelParams.set("payment", "cancel");
     cancelParams.set("plan", plan.name);
     cancelParams.set("slug", planSlug);
-    const cancelUrl = `${window.location.origin}/?${cancelParams.toString()}`;
+    const cancelUrl = `${window.location.origin}/subscription/payment-success?${cancelParams.toString()}`;
+
+    if (stripePaymentLink) {
+      saveStripePostCheckoutRedirect(successUrl);
+      window.location.assign(stripePaymentLink);
+      return;
+    }
 
     let lastError = "Stripe odeme oturumu baslatilamadi. Lutfen tekrar deneyin.";
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
