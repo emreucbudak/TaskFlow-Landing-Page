@@ -1,4 +1,20 @@
-﻿import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
+import {
+  getPlanSlug,
+  formatPlanPrice,
+  getApiBaseUrlCandidates,
+  buildApiUrl,
+  buildPlansUrl,
+  buildChatbotUrl,
+  toRecord,
+  parseApiPlans,
+  saveStripePostCheckoutRedirect,
+  clearStripePostCheckoutRedirect,
+  saveDarkMode,
+  readDarkMode,
+} from "../shared/utils";
+import { ENDPOINTS } from "../shared/endpoints";
+import type { StripeCheckoutSessionResponse, ApiCompanyPlan } from "../shared/types";
 
 
 const features = [
@@ -19,19 +35,6 @@ const features = [
   },
 ];
 
-type ApiPlanProperties = {
-  peopleAddedLimit: number;
-  teamLimit: number;
-  individualTaskLimit: number;
-  isInternalReportingEnabled: boolean;
-};
-
-type ApiCompanyPlan = {
-  planName: string;
-  planPrice: number;
-  planProperties: ApiPlanProperties;
-};
-
 type PricingPlanCard = {
   name: string;
   amount: number;
@@ -41,13 +44,6 @@ type PricingPlanCard = {
   features: string[];
   cta: string;
   popular: boolean;
-};
-
-type StripeCheckoutSessionResponse = {
-  checkoutUrl?: string;
-  CheckoutUrl?: string;
-  message?: string;
-  detail?: string;
 };
 
 type AssistantChatSource = {
@@ -74,7 +70,7 @@ type ChatMessage = {
   isError?: boolean;
 };
 
-const PLAN_SELECT_CTA = "Plan Se\u00E7";
+const PLAN_SELECT_CTA = "Plan Seç";
 
 const fixMojibakeText = (value: string) => {
   const replacements: Array<[string, string]> = [
@@ -157,120 +153,26 @@ const planDescriptions = [
   "Yüksek ölçekli şirketler için kapsamlı kurumsal çözüm.",
 ];
 
-const formatPlanPrice = (price: number) =>
-  new Intl.NumberFormat("tr-TR", {
-    style: "currency",
-    currency: "TRY",
-    maximumFractionDigits: 0,
-  }).format(price);
-
 const toPricingPlan = (plan: ApiCompanyPlan, index: number): PricingPlanCard => ({
   name: plan.planName,
   amount: plan.planPrice,
   price: plan.planPrice <= 0 ? "Ücretsiz" : formatPlanPrice(plan.planPrice),
   period: plan.planPrice <= 0 ? undefined : "/ay",
   description: planDescriptions[Math.min(index, planDescriptions.length - 1)],
-  features: [
-    `${plan.planProperties.peopleAddedLimit} kullanıcıya kadar`,
-    `${plan.planProperties.teamLimit} takım limiti`,
-    `${plan.planProperties.individualTaskLimit} bireysel görev limiti`,
-    plan.planProperties.isInternalReportingEnabled ? "İç raporlama dahil" : "İç raporlama yok",
-  ],
+  features: plan.planProperties
+    ? [
+        `${plan.planProperties.peopleAddedLimit} kullanıcıya kadar`,
+        `${plan.planProperties.teamLimit} takım limiti`,
+        `${plan.planProperties.individualTaskLimit} bireysel görev limiti`,
+        plan.planProperties.isInternalReportingEnabled ? "İç raporlama dahil" : "İç raporlama yok",
+      ]
+    : [],
   cta: PLAN_SELECT_CTA,
   popular: false,
 });
 
-const toRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-
-const getNumberByAliases = (obj: Record<string, unknown>, aliases: string[]): number => {
-  for (const key of aliases) {
-    const numericValue = Number(obj[key]);
-    if (!Number.isNaN(numericValue)) return numericValue;
-  }
-  return Number.NaN;
-};
-
-const getBooleanByAliases = (obj: Record<string, unknown>, aliases: string[]): boolean => {
-  for (const key of aliases) {
-    const rawValue = obj[key];
-    if (typeof rawValue === "boolean") return rawValue;
-    if (typeof rawValue === "string") {
-      const normalized = rawValue.trim().toLowerCase();
-      if (normalized === "true") return true;
-      if (normalized === "false") return false;
-    }
-    if (typeof rawValue === "number") return rawValue !== 0;
-  }
-  return false;
-};
-
-const parseApiPlans = (payload: unknown): ApiCompanyPlan[] => {
-  const payloadRecord = toRecord(payload);
-  const dataRecord = toRecord(payloadRecord.data);
-  const itemsRecord = toRecord(payloadRecord.items);
-  const resultRecord = toRecord(payloadRecord.result);
-  const valueRecord = toRecord(payloadRecord.value);
-  const rawArray =
-    Array.isArray(payload) ? payload :
-      Array.isArray(payloadRecord.$values) ? payloadRecord.$values :
-      Array.isArray(payloadRecord.data) ? payloadRecord.data :
-        Array.isArray(dataRecord.$values) ? dataRecord.$values :
-        Array.isArray(payloadRecord.items) ? payloadRecord.items :
-          Array.isArray(itemsRecord.$values) ? itemsRecord.$values :
-          Array.isArray(payloadRecord.result) ? payloadRecord.result :
-            Array.isArray(resultRecord.$values) ? resultRecord.$values :
-            Array.isArray(payloadRecord.value) ? payloadRecord.value :
-              Array.isArray(valueRecord.$values) ? valueRecord.$values :
-              [];
-
-  return rawArray
-    .map((item) => {
-      const raw = toRecord(item);
-      const rawProperties = toRecord(raw.planProperties ?? raw.PlanProperties ?? raw.properties ?? raw.Properties);
-      const planNameValue = raw.planName ?? raw.PlanName ?? raw.name ?? raw.Name;
-      const planName = typeof planNameValue === "string" ? planNameValue : undefined;
-      const planPrice = Number(raw.planPrice ?? raw.PlanPrice ?? raw.price ?? raw.Price);
-      if (!planName || Number.isNaN(planPrice)) return null;
-      const peopleAddedLimit = getNumberByAliases(rawProperties, ["peopleAddedLimit", "PeopleAddedLimit", "workerAddedLimit", "WorkerAddedLimit"]);
-      const teamLimit = getNumberByAliases(rawProperties, ["teamLimit", "TeamLimit"]);
-      const individualTaskLimit = getNumberByAliases(rawProperties, ["individualTaskLimit", "IndividualTaskLimit", "taskLimit", "TaskLimit"]);
-      const isInternalReportingEnabled = getBooleanByAliases(rawProperties, ["isInternalReportingEnabled", "IsInternalReportingEnabled", "isReportIncluded", "IsReportIncluded"]);
-      if ([peopleAddedLimit, teamLimit, individualTaskLimit].some(Number.isNaN)) return null;
-      return { planName, planPrice, planProperties: { peopleAddedLimit, teamLimit, individualTaskLimit, isInternalReportingEnabled } };
-    })
-    .filter((plan): plan is ApiCompanyPlan => plan !== null);
-};
-
-const buildPlansUrl = (baseUrl: string) =>
-  `${baseUrl ? `${baseUrl}/` : "/"}api/Tenant/CompanyPlans?t=${Date.now()}`;
-
-const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
-const buildApiUrl = (baseUrl: string, endpointPath: string) =>
-  baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
-
-const getApiBaseUrlCandidates = (): string[] => {
-  const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
-  return ["", envBaseUrl, "http://localhost:5172", "https://localhost:7243", "http://localhost:8080", "https://localhost:8081"]
-    .map((url) => normalizeBaseUrl(url))
-    .filter((url, index, arr) => arr.indexOf(url) === index);
-};
-
-const getChatApiBaseUrlCandidates = (): string[] => {
-  const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
-  return ["", envBaseUrl, "http://localhost:8080", "https://localhost:8081", "http://localhost:5172", "https://localhost:7243"]
-    .map((url) => normalizeBaseUrl(url))
-    .filter((url, index, arr) => arr.indexOf(url) === index);
-};
-
-const buildChatbotUrl = (baseUrl: string) =>
-  `${baseUrl ? `${baseUrl}/` : "/"}api/ai/chatbot?t=${Date.now()}`;
-
-const toAssistantRecord = (value: unknown): Record<string, unknown> =>
-  typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-
 const parseAssistantChatResponse = (payload: unknown) => {
-  const record = toAssistantRecord(payload);
+  const record = toRecord(payload);
   const answerValue = record.answer ?? record.Answer;
   const answer = typeof answerValue === "string" ? answerValue.trim() : "";
   const rawSources = Array.isArray(record.sources)
@@ -281,7 +183,7 @@ const parseAssistantChatResponse = (payload: unknown) => {
 
   const sources = rawSources
     .map((item) => {
-      const raw = toAssistantRecord(item);
+      const raw = toRecord(item);
       const sourceKeyValue = raw.sourceKey ?? raw.SourceKey ?? raw.source_key;
       const titleValue = raw.title ?? raw.Title;
       const chunkIndexValue = Number(raw.chunkIndex ?? raw.ChunkIndex ?? raw.chunk_index);
@@ -305,17 +207,6 @@ const parseAssistantChatResponse = (payload: unknown) => {
 
 const assistantWelcomeMessage = "Merhaba, ben TFBot. Size yardımcı olmak için buradayım.";
 
-const normalizePlanText = (value: string) =>
-  value.toLocaleLowerCase("tr-TR").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim();
-
-const getPlanSlug = (planName: string) => {
-  const normalized = normalizePlanText(planName);
-  if (/(start|startup|baslangic)/.test(normalized)) return "startup";
-  if (/(business|profesyonel)/.test(normalized)) return "business";
-  if (/(enterprise|kurumsal)/.test(normalized)) return "enterprise";
-  return normalized.replace(/\s+/g, "-");
-};
-
 const getStripePaymentLinkByPlan = (planSlug: string) => {
   const startup = (import.meta.env.VITE_STRIPE_PAYMENT_LINK_STARTUP as string | undefined)?.trim() ?? "";
   const business = (import.meta.env.VITE_STRIPE_PAYMENT_LINK_BUSINESS as string | undefined)?.trim() ?? "";
@@ -325,29 +216,6 @@ const getStripePaymentLinkByPlan = (planSlug: string) => {
   if (planSlug === "business") return business;
   if (planSlug === "enterprise") return enterprise;
   return "";
-};
-
-const stripePostCheckoutRedirectStorageKey = "taskflow_stripe_post_checkout_redirect";
-
-const saveStripePostCheckoutRedirect = (returnUrl: string) => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(
-      stripePostCheckoutRedirectStorageKey,
-      JSON.stringify({ returnUrl, createdAt: Date.now() })
-    );
-  } catch {
-    // ignore storage errors
-  }
-};
-
-const clearStripePostCheckoutRedirect = () => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.removeItem(stripePostCheckoutRedirectStorageKey);
-  } catch {
-    // ignore storage errors
-  }
 };
 
 const trustedBy = [
@@ -618,7 +486,7 @@ const FaqList = ({ cardBg, border, text, subText }: FaqListProps) => {
 };
 
 export default function TaskFlowLanding() {
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(() => readDarkMode(false));
   const [pricingPlans, setPricingPlans] = useState<PricingPlanCard[]>(fallbackPricingPlans);
   const [loadingPlanName, setLoadingPlanName] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState("");
@@ -630,17 +498,26 @@ export default function TaskFlowLanding() {
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
 
+  const toggleDark = () => {
+    setDark((prev) => {
+      const next = !prev;
+      saveDarkMode(next);
+      return next;
+    });
+  };
+
   const scrollToSection = (sectionId: string) => {
     document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   useEffect(() => {
-    let isMounted = true;
+    const controller = new AbortController();
     const fetchCompanyPlans = async () => {
       try {
         for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+          if (controller.signal.aborted) return;
           try {
-            const response = await fetch(buildPlansUrl(apiBaseUrl), { cache: "no-store" });
+            const response = await fetch(buildPlansUrl(apiBaseUrl), { cache: "no-store", signal: controller.signal });
             if (!response.ok) continue;
             const payload: unknown = await response.json();
             const apiPlans = parseApiPlans(payload).sort((a, b) => a.planPrice - b.planPrice).slice(0, 3);
@@ -648,16 +525,20 @@ export default function TaskFlowLanding() {
             const planCards = apiPlans.map((plan, index) => toPricingPlan(plan, index));
             const mergedPlans = fallbackPricingPlans.map((fallbackPlan, index) => planCards[index] ?? fallbackPlan);
             const plansWithPopular = mergedPlans.map((plan, index) => ({ ...plan, popular: index === 1 }));
-            if (isMounted) setPricingPlans(plansWithPopular);
+            if (!controller.signal.aborted) setPricingPlans(plansWithPopular);
             return;
-          } catch { continue; }
+          } catch (err) {
+            if (err instanceof DOMException && err.name === "AbortError") return;
+            continue;
+          }
         }
       } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
         console.error("Şirket planları alınırken hata oluştu:", error);
       }
     };
     void fetchCompanyPlans();
-    return () => { isMounted = false; };
+    return () => { controller.abort(); };
   }, []);
 
   const bg = dark ? "#10221f" : "#f8fcfb";
@@ -690,7 +571,6 @@ export default function TaskFlowLanding() {
     setLoadingPlanName(plan.name);
     setCheckoutError("");
 
-    const createCheckoutPath = "/api/Tenant/CreateStripeCheckoutSessionRequest";
     const successParams = new URLSearchParams();
     successParams.set("payment", "success");
     successParams.set("plan", plan.name);
@@ -712,7 +592,7 @@ export default function TaskFlowLanding() {
     let lastError = "Stripe odeme oturumu baslatilamadi. Lutfen tekrar deneyin.";
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
-        const response = await fetch(buildApiUrl(apiBaseUrl, createCheckoutPath), {
+        const response = await fetch(buildApiUrl(apiBaseUrl, ENDPOINTS.CREATE_STRIPE_CHECKOUT_SESSION), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -772,7 +652,7 @@ export default function TaskFlowLanding() {
 
     let lastError = "Şu anda bot yanıt veremedi. Lütfen tekrar deneyin.";
 
-    for (const apiBaseUrl of getChatApiBaseUrlCandidates()) {
+    for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
         const response = await fetch(buildChatbotUrl(apiBaseUrl), {
           method: "POST",
@@ -789,7 +669,7 @@ export default function TaskFlowLanding() {
         }
 
         if (!response.ok) {
-          const parsed = toAssistantRecord(payload);
+          const parsed = toRecord(payload);
           lastError = (typeof parsed.detail === "string" && parsed.detail.trim()) ||
             (typeof parsed.message === "string" && parsed.message.trim()) ||
             `Yanıt alınamadı (HTTP ${response.status}).`;
@@ -838,14 +718,11 @@ export default function TaskFlowLanding() {
 
   return (
     <>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
-      <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
-
       <div style={{ background: bg, color: text, fontFamily: "'Inter',sans-serif", minHeight: "100vh", overflowX: "hidden", transition: "background .3s,color .3s" }}>
 
         <button
           type="button"
-          onClick={() => setDark(!dark)}
+          onClick={toggleDark}
           aria-label={dark ? "Açık tema" : "Koyu tema"}
           style={{
             position: "fixed", bottom: "20px", left: "20px", zIndex: 999,
@@ -1064,7 +941,6 @@ export default function TaskFlowLanding() {
 
         <div style={{ maxWidth: "1280px", margin: "0 auto" }}>
 
-          {/* HERO - DEĞİŞEN KISIM */}
           <section style={{ display: "flex", flexWrap: "wrap", gap: "32px", padding: "64px 16px 64px 32px", alignItems: "center", justifyContent: "center" }}>
             <div style={{ flex: "1 1 320px", display: "flex", flexDirection: "column", gap: "24px", maxWidth: "560px" }}>
               <h1 style={{ fontSize: "clamp(2.2rem,5vw,3.5rem)", fontWeight: 900, lineHeight: 1.1, margin: 0 }}>
@@ -1242,4 +1118,3 @@ export default function TaskFlowLanding() {
     </>
   );
 }
-

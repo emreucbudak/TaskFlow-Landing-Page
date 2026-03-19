@@ -2,6 +2,14 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { extractApiError, parsePayload, type ApiErrorPayload } from "../shared/errors/api";
 import { toFriendlyCompanyCreateError } from "../shared/errors/mappers";
 import { companyCreateErrorMessages } from "../shared/errors/messages";
+import { ENDPOINTS } from "../shared/endpoints";
+import {
+  getPlanSlug,
+  getApiBaseUrlCandidates,
+  buildApiUrl,
+  saveDarkMode,
+  readDarkMode,
+} from "../shared/utils";
 
 type PaymentQuery = {
   payment: string;
@@ -14,18 +22,9 @@ type PaymentQuery = {
 const guidRegex =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-const normalizeBaseUrl = (value: string) => value.replace(/\/$/, "");
 const normalizeDesktopBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
-const getApiBaseUrlCandidates = (): string[] => {
-  const envBaseUrl = (import.meta.env.VITE_TASKFLOW_API_URL as string | undefined)?.trim() ?? "";
-  return ["", envBaseUrl, "http://localhost:8080", "http://localhost:5172", "https://localhost:7243", "https://localhost:8081"]
-    .map((url) => normalizeBaseUrl(url))
-    .filter((url, index, arr) => arr.indexOf(url) === index);
-};
-
-const buildApiUrl = (baseUrl: string, endpointPath: string) =>
-  baseUrl ? `${baseUrl}${endpointPath}` : endpointPath;
+const ALLOWED_DESKTOP_PROTOCOL = "taskflowapp:";
 
 const getDesktopAppBaseUrl = () => {
   const configured = (import.meta.env.VITE_DESKTOP_APP_RETURN_URL as string | undefined)?.trim() ?? "";
@@ -41,20 +40,13 @@ const getDesktopAppBaseUrl = () => {
   return `${normalizedScheme}://payment-success`;
 };
 
-const normalizePlanText = (value: string) =>
-  value
-    .toLocaleLowerCase("tr-TR")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-
-const getPlanSlug = (planName: string) => {
-  const normalized = normalizePlanText(planName);
-  if (/(start|startup|baslangic)/.test(normalized)) return "startup";
-  if (/(business|profesyonel)/.test(normalized)) return "business";
-  if (/(enterprise|kurumsal)/.test(normalized)) return "enterprise";
-  return normalized.replace(/\s+/g, "-");
+const isAllowedDesktopUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === ALLOWED_DESKTOP_PROTOCOL;
+  } catch {
+    return false;
+  }
 };
 
 const readQuery = (): PaymentQuery => {
@@ -75,9 +67,17 @@ export default function PlanPaymentSuccessPage() {
   const activationStartedRef = useRef(false);
   const appOpenAttemptedRef = useRef(false);
 
-  const [dark, setDark] = useState(false);
+  const [dark, setDark] = useState(() => readDarkMode(false));
   const [didAttemptOpenApp, setDidAttemptOpenApp] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+
+  const toggleDark = () => {
+    setDark((prev) => {
+      const next = !prev;
+      saveDarkMode(next);
+      return next;
+    });
+  };
 
   const normalizedPaymentStatus = query.payment.trim().toLowerCase();
   const isPaymentSuccess = normalizedPaymentStatus === "success";
@@ -107,7 +107,8 @@ export default function PlanPaymentSuccessPage() {
     }
 
     const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    setDark(mediaQuery.matches);
+    const storedDark = readDarkMode(mediaQuery.matches);
+    setDark(storedDark);
 
     const onThemeChange = (event: MediaQueryListEvent) => {
       setDark(event.matches);
@@ -138,6 +139,11 @@ export default function PlanPaymentSuccessPage() {
 
   const tryOpenDesktopApp = (forceManualNavigation: boolean) => {
     if (typeof window === "undefined") {
+      return;
+    }
+
+    if (!isAllowedDesktopUrl(desktopAppReturnUrl)) {
+      console.warn("Blocked desktop app open: URL protocol not allowed", desktopAppReturnUrl);
       return;
     }
 
@@ -183,16 +189,18 @@ export default function PlanPaymentSuccessPage() {
     }
 
     let isCancelled = false;
-    const activateSubscriptionPath = "/api/Tenant/ConfirmStripePaymentAndActivateRequest";
+    const controller = new AbortController();
 
     const run = async () => {
       let lastError: string = companyCreateErrorMessages.subscriptionActivationFailed;
 
       for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+        if (controller.signal.aborted) return;
         try {
-          const response = await fetch(buildApiUrl(apiBaseUrl, activateSubscriptionPath), {
+          const response = await fetch(buildApiUrl(apiBaseUrl, ENDPOINTS.CONFIRM_STRIPE_PAYMENT_AND_ACTIVATE), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
             body: JSON.stringify({
               companyId: hasValidCompanyId ? companyId : undefined,
               planName: planName || undefined,
@@ -234,6 +242,7 @@ export default function PlanPaymentSuccessPage() {
           }
           return;
         } catch (error) {
+          if (error instanceof DOMException && error.name === "AbortError") return;
           if (error instanceof Error && error.message) {
             lastError = toFriendlyCompanyCreateError(error.message);
           } else {
@@ -251,6 +260,7 @@ export default function PlanPaymentSuccessPage() {
 
     return () => {
       isCancelled = true;
+      controller.abort();
     };
   }, [
     companyId,
@@ -287,7 +297,7 @@ export default function PlanPaymentSuccessPage() {
     transition: "background .3s,color .3s",
   };
 
-  const cardStyle: CSSProperties = {
+  const cardStyleObj: CSSProperties = {
     width: "100%",
     maxWidth: "680px",
     background: cardBg,
@@ -300,81 +310,77 @@ export default function PlanPaymentSuccessPage() {
   };
 
   return (
-    <>
-      <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
-      <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet" />
-      <div style={pageStyle}>
-        <button
-          type="button"
-          onClick={() => setDark(!dark)}
-          style={{
-            position: "fixed",
-            bottom: "20px",
-            right: "20px",
-            zIndex: 999,
-            width: "44px",
-            height: "44px",
-            borderRadius: "50%",
-            border: "none",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: "0 4px 12px rgba(0,0,0,.3)",
-            background: dark ? "#13ecc8" : "#0d1b19",
-            color: dark ? "#0d1b19" : "#ffffff",
-          }}
-          aria-label={dark ? "Açık moda geç" : "Koyu moda geç"}
-        >
-          <span className="material-symbols-outlined" style={{ fontFamily: "'Material Symbols Outlined'" }}>
-            {dark ? "light_mode" : "dark_mode"}
-          </span>
-        </button>
+    <div style={pageStyle}>
+      <button
+        type="button"
+        onClick={toggleDark}
+        style={{
+          position: "fixed",
+          bottom: "20px",
+          right: "20px",
+          zIndex: 999,
+          width: "44px",
+          height: "44px",
+          borderRadius: "50%",
+          border: "none",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          boxShadow: "0 4px 12px rgba(0,0,0,.3)",
+          background: dark ? "#13ecc8" : "#0d1b19",
+          color: dark ? "#0d1b19" : "#ffffff",
+        }}
+        aria-label={dark ? "Açık moda geç" : "Koyu moda geç"}
+      >
+        <span className="material-symbols-outlined" style={{ fontFamily: "'Material Symbols Outlined'" }}>
+          {dark ? "light_mode" : "dark_mode"}
+        </span>
+      </button>
 
-        <div style={cardStyle}>
-          <h1 style={{ margin: "0 0 12px", color: text, fontSize: "clamp(1.65rem,3.2vw,2.2rem)", lineHeight: 1.2 }}>
-            Ödeme Başarılı!
-          </h1>
+      <div style={cardStyleObj}>
+        <h1 style={{ margin: "0 0 12px", color: text, fontSize: "clamp(1.65rem,3.2vw,2.2rem)", lineHeight: 1.2 }}>
+          Ödeme Başarılı!
+        </h1>
 
-          <p style={{ margin: "0 0 2px", color: subText, lineHeight: 1.6, fontSize: "15px" }}>
-            {infoText}
-          </p>
+        <p style={{ margin: "0 0 2px", color: subText, lineHeight: 1.6, fontSize: "15px" }}>
+          {infoText}
+        </p>
 
-          <div style={{ marginTop: "18px", display: "grid", gap: "10px" }}>
-            {showReturnButton && (
-              <button
-                type="button"
-                onClick={() => tryOpenDesktopApp(true)}
-                style={{
-                  height: "50px",
-                  borderRadius: "12px",
-                  border: "none",
-                  fontWeight: 800,
-                  fontSize: "15px",
-                  cursor: "pointer",
-                  background: "#13ecc8",
-                  color: "#0d1b19",
-                  boxShadow: "0 6px 20px rgba(19,236,200,.28)",
-                }}
-              >
-                Uygulamaya Dön
-              </button>
-            )}
-          </div>
-
-          {errorMessage && (
-            <p style={{ margin: "16px 0 0", fontSize: "13px", color: "#b91c1c" }}>
-              {errorMessage}
-            </p>
-          )}
-
-          {showReturnButton && didAttemptOpenApp && (
-            <p style={{ margin: "10px 0 0", fontSize: "12px", color: subText }}>
-              Uygulama otomatik açılmadıysa "Uygulamaya Dön" butonuna tıklayın.
-            </p>
+        <div style={{ marginTop: "18px", display: "grid", gap: "10px" }}>
+          {showReturnButton && (
+            <button
+              type="button"
+              onClick={() => tryOpenDesktopApp(true)}
+              style={{
+                height: "50px",
+                borderRadius: "12px",
+                border: "none",
+                fontWeight: 800,
+                fontSize: "15px",
+                cursor: "pointer",
+                background: "#13ecc8",
+                color: "#0d1b19",
+                boxShadow: "0 6px 20px rgba(19,236,200,.28)",
+              }}
+            >
+              Uygulamaya Dön
+            </button>
           )}
         </div>
+
+        {errorMessage && (
+          <p style={{ margin: "16px 0 0", fontSize: "13px", color: "#b91c1c" }}>
+            {errorMessage}
+          </p>
+        )}
+
+        {showReturnButton && didAttemptOpenApp && (
+          <p style={{ margin: "10px 0 0", fontSize: "12px", color: subText }}>
+            Uygulama otomatik açılmadıysa "Uygulamaya Dön" butonuna tıklayın.
+          </p>
+        )}
       </div>
-    </>
+    </div>
   );
 }
