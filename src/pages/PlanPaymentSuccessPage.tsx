@@ -3,13 +3,14 @@ import { extractApiError, parsePayload, type ApiErrorPayload } from "../shared/e
 import { toFriendlyCompanyCreateError } from "../shared/errors/mappers";
 import { companyCreateErrorMessages } from "../shared/errors/messages";
 import { ENDPOINTS } from "../shared/endpoints";
+import { guidRegex } from "../shared/constants";
 import {
   getPlanSlug,
   getApiBaseUrlCandidates,
   buildApiUrl,
-  saveDarkMode,
-  readDarkMode,
 } from "../shared/utils";
+import { saveDarkMode, readDarkMode } from "../shared/storage";
+import DarkModeToggle from "../shared/components/DarkModeToggle";
 
 type PaymentQuery = {
   payment: string;
@@ -18,9 +19,6 @@ type PaymentQuery = {
   slug: string;
   sessionId: string;
 };
-
-const guidRegex =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const normalizeDesktopBaseUrl = (value: string) => value.trim().replace(/\/+$/, "");
 
@@ -101,23 +99,6 @@ export default function PlanPaymentSuccessPage() {
     return planSlug || "seçili";
   }, [planName, planSlug]);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.matchMedia) {
-      return;
-    }
-
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-    const storedDark = readDarkMode(mediaQuery.matches);
-    setDark(storedDark);
-
-    const onThemeChange = (event: MediaQueryListEvent) => {
-      setDark(event.matches);
-    };
-
-    mediaQuery.addEventListener("change", onThemeChange);
-    return () => mediaQuery.removeEventListener("change", onThemeChange);
-  }, []);
-
   const desktopAppReturnUrl = useMemo(() => {
     const base = getDesktopAppBaseUrl();
     const params = new URLSearchParams();
@@ -136,6 +117,23 @@ export default function PlanPaymentSuccessPage() {
     const separator = base.includes("?") ? "&" : "?";
     return `${base}${separator}${queryText}`;
   }, [companyId, isPaymentCancel, isPaymentSuccess, normalizedPaymentStatus, planName, planSlug, sessionId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const storedDark = readDarkMode(mediaQuery.matches);
+    setDark(storedDark);
+
+    const onThemeChange = (event: MediaQueryListEvent) => {
+      setDark(event.matches);
+    };
+
+    mediaQuery.addEventListener("change", onThemeChange);
+    return () => mediaQuery.removeEventListener("change", onThemeChange);
+  }, []);
 
   const tryOpenDesktopApp = (forceManualNavigation: boolean) => {
     if (typeof window === "undefined") {
@@ -311,32 +309,7 @@ export default function PlanPaymentSuccessPage() {
 
   return (
     <div style={pageStyle}>
-      <button
-        type="button"
-        onClick={toggleDark}
-        style={{
-          position: "fixed",
-          bottom: "20px",
-          right: "20px",
-          zIndex: 999,
-          width: "44px",
-          height: "44px",
-          borderRadius: "50%",
-          border: "none",
-          cursor: "pointer",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          boxShadow: "0 4px 12px rgba(0,0,0,.3)",
-          background: dark ? "#13ecc8" : "#0d1b19",
-          color: dark ? "#0d1b19" : "#ffffff",
-        }}
-        aria-label={dark ? "Açık moda geç" : "Koyu moda geç"}
-      >
-        <span className="material-symbols-outlined" style={{ fontFamily: "'Material Symbols Outlined'" }}>
-          {dark ? "light_mode" : "dark_mode"}
-        </span>
-      </button>
+      <DarkModeToggle dark={dark} toggleDark={toggleDark} position="right" />
 
       <div style={cardStyleObj}>
         <h1 style={{ margin: "0 0 12px", color: text, fontSize: "clamp(1.65rem,3.2vw,2.2rem)", lineHeight: 1.2 }}>

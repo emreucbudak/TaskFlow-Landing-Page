@@ -6,6 +6,7 @@ import { extractApiError, parsePayload, type ApiErrorPayload } from "../shared/e
 import { toFriendlyCompanyCreateError } from "../shared/errors/mappers";
 import { companyCreateErrorMessages, validationMessages } from "../shared/errors/messages";
 import { ENDPOINTS } from "../shared/endpoints";
+import { guidRegex } from "../shared/constants";
 import type { StripeCheckoutSessionResponse, ApiCompanyPlan } from "../shared/types";
 import {
   normalizePlanText,
@@ -14,14 +15,18 @@ import {
   getApiBaseUrlCandidates,
   buildApiUrl,
   buildPlansUrl,
-  parseApiPlans,
+} from "../shared/utils";
+import { parseApiPlans } from "../shared/planParser";
+import {
   readPendingPlanSelection,
   clearPendingPlanSelection,
   saveStripePostCheckoutRedirect,
   clearStripePostCheckoutRedirect,
   saveDarkMode,
   readDarkMode,
-} from "../shared/utils";
+} from "../shared/storage";
+import Icon from "../shared/components/Icon";
+import "./CompanyCreatePage.css";
 
 type CreateCompanyResponse = {
   companyId?: string;
@@ -53,9 +58,6 @@ const companyCreateSchema = z
 
 type CompanyCreateFormValues = z.infer<typeof companyCreateSchema>;
 
-const guidRegex =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
 const readQuery = () => {
   const search = typeof window !== "undefined" ? window.location.search : "";
   const params = new URLSearchParams(search);
@@ -66,11 +68,6 @@ const readQuery = () => {
     companyId: params.get("companyId") ?? "",
   };
 };
-
-type IconProps = { name: string; style?: CSSProperties };
-const Icon = ({ name, style }: IconProps) => (
-  <span style={{ fontFamily: "'Material Symbols Outlined'", ...style }}>{name}</span>
-);
 
 const Blobs = ({ dark }: { dark: boolean }) => (
   <>
@@ -104,6 +101,91 @@ const Blobs = ({ dark }: { dark: boolean }) => (
     }} />
   </>
 );
+
+// ── API sub-steps for handleCreate ──
+
+async function createCompany(apiBaseUrl: string, companyName: string) {
+  const response = await fetch(buildApiUrl(apiBaseUrl, ENDPOINTS.CREATE_COMPANY), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ companyName: companyName.trim() }),
+  });
+  const raw = await response.text();
+  const payload = parsePayload<CreateCompanyResponse>(raw);
+  return { response, raw, payload };
+}
+
+async function registerAdmin(
+  apiBaseUrl: string,
+  params: { adminName: string; adminEmail: string; password: string; companyId: string },
+) {
+  const response = await fetch(buildApiUrl(apiBaseUrl, ENDPOINTS.REGISTER), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: params.adminName.trim(),
+      email: params.adminEmail.trim(),
+      password: params.password,
+      companyId: params.companyId,
+      role: "Company",
+    }),
+  });
+  const raw = await response.text();
+  const payload = parsePayload<ApiErrorPayload>(raw);
+  return { response, raw, payload };
+}
+
+async function activateSubscription(
+  companyId: string,
+  planName: string,
+  planSlug: string,
+) {
+  let lastError: string = companyCreateErrorMessages.subscriptionActivationFailed;
+
+  for (const apiBaseUrl of getApiBaseUrlCandidates()) {
+    try {
+      const response = await fetch(buildApiUrl(apiBaseUrl, ENDPOINTS.ACTIVATE_COMPANY_SUBSCRIPTION), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          planName: planName || undefined,
+          planSlug: planSlug || undefined,
+        }),
+      });
+
+      const raw = await response.text();
+      const payload = parsePayload<ApiErrorPayload>(raw);
+
+      if (!response.ok) {
+        const activateError = extractApiError({
+          payload,
+          raw,
+          statusCode: response.status,
+          fallback: companyCreateErrorMessages.subscriptionActivationFailed,
+          statusCodeMap: { 401: "unauthorized", 404: "resource not found", 409: "already exists", 429: "too many requests" },
+        });
+        const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
+
+        if (response.status < 500) {
+          return { ok: false as const, error: friendlyError };
+        }
+        lastError = friendlyError;
+        continue;
+      }
+
+      return { ok: true as const };
+    } catch (error) {
+      if (error instanceof Error && error.message) {
+        lastError = toFriendlyCompanyCreateError(error.message);
+      } else {
+        lastError = companyCreateErrorMessages.networkUnavailable;
+      }
+    }
+  }
+
+  return { ok: false as const, error: lastError };
+}
 
 export default function CompanyCreatePage() {
   const { payment, plan, slug } = useMemo(() => readQuery(), []);
@@ -231,12 +313,7 @@ export default function CompanyCreatePage() {
             raw: checkoutRaw,
             statusCode: checkoutResponse.status,
             fallback: companyCreateErrorMessages.genericActionFailed,
-            statusCodeMap: {
-              401: "unauthorized",
-              404: "resource not found",
-              409: "already exists",
-              429: "too many requests",
-            },
+            statusCodeMap: { 401: "unauthorized", 404: "resource not found", 409: "already exists", 429: "too many requests" },
           });
           const friendlyError = toFriendlyCompanyCreateError(checkoutError);
           if (checkoutResponse.status < 500) {
@@ -287,16 +364,10 @@ export default function CompanyCreatePage() {
 
     for (const apiBaseUrl of getApiBaseUrlCandidates()) {
       try {
-        const createCompanyUrl = buildApiUrl(apiBaseUrl, ENDPOINTS.CREATE_COMPANY);
-        const createResponse = await fetch(createCompanyUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ companyName: companyName.trim() }),
-        });
+        // Step 1: Create company
+        const { response: createResponse, raw: createRaw, payload: createPayload } =
+          await createCompany(apiBaseUrl, companyName);
         hasAnyReachableResponse = true;
-
-        const createRaw = await createResponse.text();
-        const createPayload = parsePayload<CreateCompanyResponse>(createRaw);
 
         if (!createResponse.ok) {
           const createError = extractApiError({
@@ -304,12 +375,7 @@ export default function CompanyCreatePage() {
             raw: createRaw,
             statusCode: createResponse.status,
             fallback: lastError,
-            statusCodeMap: {
-              401: "unauthorized",
-              404: "resource not found",
-              409: "already exists",
-              429: "too many requests",
-            },
+            statusCodeMap: { 401: "unauthorized", 404: "resource not found", 409: "already exists", 429: "too many requests" },
           });
           const friendlyError = toFriendlyCompanyCreateError(createError);
           if (createResponse.status < 500) {
@@ -327,21 +393,9 @@ export default function CompanyCreatePage() {
           continue;
         }
 
-        const registerUrl = buildApiUrl(apiBaseUrl, ENDPOINTS.REGISTER);
-        const registerResponse = await fetch(registerUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            name: adminName.trim(),
-            email: adminEmail.trim(),
-            password,
-            companyId: createdCompanyId,
-            role: "Company",
-          }),
-        });
-
-        const registerRaw = await registerResponse.text();
-        const registerPayload = parsePayload<ApiErrorPayload>(registerRaw);
+        // Step 2: Register admin
+        const { response: registerResponse, raw: registerRaw, payload: registerPayload } =
+          await registerAdmin(apiBaseUrl, { adminName, adminEmail, password, companyId: createdCompanyId });
 
         if (!registerResponse.ok) {
           const registerError = extractApiError({
@@ -349,12 +403,7 @@ export default function CompanyCreatePage() {
             raw: registerRaw,
             statusCode: registerResponse.status,
             fallback: companyCreateErrorMessages.registerFailed,
-            statusCodeMap: {
-              401: "unauthorized",
-              404: "resource not found",
-              409: "already exists",
-              429: "too many requests",
-            },
+            statusCodeMap: { 401: "unauthorized", 404: "resource not found", 409: "already exists", 429: "too many requests" },
           });
           setErrorMessage(
             `${companyCreateErrorMessages.companyCreatedButAdminFailedPrefix} ${toFriendlyCompanyCreateError(registerError)}`
@@ -363,6 +412,7 @@ export default function CompanyCreatePage() {
           return;
         }
 
+        // Step 3: Stripe checkout or subscription activation
         const planPrice = effectivePlan ? resolvePlanPrice(effectivePlan) : undefined;
         const shouldStartPaidCheckout =
           isLegacyPaymentFlowEnabled && Boolean(effectivePlan || effectiveSlug) && ((planPrice ?? 1) > 0);
@@ -382,62 +432,10 @@ export default function CompanyCreatePage() {
 
         const activationPlanName = effectivePlan || "Start-up";
         const activationPlanSlug = effectiveSlug || getPlanSlug(activationPlanName);
-        let activationLastError: string = companyCreateErrorMessages.subscriptionActivationFailed;
-        let isSubscriptionActivated = false;
+        const activationResult = await activateSubscription(createdCompanyId, activationPlanName, activationPlanSlug);
 
-        for (const subscriptionApiBaseUrl of getApiBaseUrlCandidates()) {
-          try {
-            const activateResponse = await fetch(buildApiUrl(subscriptionApiBaseUrl, ENDPOINTS.ACTIVATE_COMPANY_SUBSCRIPTION), {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                companyId: createdCompanyId,
-                planName: activationPlanName || undefined,
-                planSlug: activationPlanSlug || undefined,
-              }),
-            });
-
-            const activateRaw = await activateResponse.text();
-            const activatePayload = parsePayload<ApiErrorPayload>(activateRaw);
-
-            if (!activateResponse.ok) {
-              const activateError = extractApiError({
-                payload: activatePayload,
-                raw: activateRaw,
-                statusCode: activateResponse.status,
-                fallback: companyCreateErrorMessages.subscriptionActivationFailed,
-                statusCodeMap: {
-                  401: "unauthorized",
-                  404: "resource not found",
-                  409: "already exists",
-                  429: "too many requests",
-                },
-              });
-              const friendlyError = `${companyCreateErrorMessages.companyAndAdminCreatedButSubscriptionFailedPrefix} ${toFriendlyCompanyCreateError(activateError)}`;
-
-              if (activateResponse.status < 500) {
-                setErrorMessage(friendlyError);
-                setIsLoading(false);
-                return;
-              }
-
-              activationLastError = friendlyError;
-              continue;
-            }
-
-            isSubscriptionActivated = true;
-            break;
-          } catch (error) {
-            if (error instanceof Error && error.message) {
-              activationLastError = toFriendlyCompanyCreateError(error.message);
-            } else {
-              activationLastError = companyCreateErrorMessages.networkUnavailable;
-            }
-          }
-        }
-
-        if (!isSubscriptionActivated) {
-          setErrorMessage(activationLastError);
+        if (!activationResult.ok) {
+          setErrorMessage(activationResult.error);
           setIsLoading(false);
           return;
         }
@@ -536,51 +534,6 @@ export default function CompanyCreatePage() {
   return (
     <>
       <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=Syne:wght@700;800&display=swap" rel="stylesheet" />
-      <style>{`
-        @keyframes fadeUp {
-          from { opacity: 0; transform: translateY(18px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-        .tf-card { animation: fadeUp 0.55s cubic-bezier(.22,.68,0,1.2) both; }
-
-        .tf-input-dark::placeholder { color: rgba(255,255,255,0.25); }
-        .tf-input-dark:focus {
-          border-color: rgba(19,236,200,0.55) !important;
-          background: rgba(19,236,200,0.04) !important;
-        }
-        .tf-input-light::placeholder { color: rgba(13,27,25,0.3); }
-        .tf-input-light:focus {
-          border-color: rgba(19,236,200,0.7) !important;
-          background: rgba(19,236,200,0.05) !important;
-        }
-
-        .tf-btn {
-          width: 100%;
-          height: 52px;
-          border: none;
-          border-radius: 12px;
-          font-family: 'Syne', sans-serif;
-          font-weight: 700;
-          font-size: 14px;
-          letter-spacing: 0.03em;
-          cursor: pointer;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 10px;
-          transition: transform 0.15s, box-shadow 0.15s;
-        }
-        .tf-btn:hover:not(:disabled) {
-          transform: translateY(-1px);
-          box-shadow: 0 8px 24px rgba(19,236,200,0.35);
-        }
-        .tf-btn:disabled { cursor: not-allowed; }
-        .tf-toggle { transition: background 0.2s, color 0.2s; }
-        .tf-toggle:hover { opacity: 0.85; }
-      `}</style>
 
       <button
         className="tf-toggle"

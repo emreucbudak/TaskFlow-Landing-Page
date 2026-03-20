@@ -1,1 +1,24 @@
 @import "tailwindcss";
+
+.device-mockup-wrapper {
+  transform: scale(1);
+  transform-origin: center bottom;
+}
+
+@media (max-width: 1024px) {
+  .device-mockup-wrapper {
+    transform: scale(0.85);
+  }
+}
+
+@media (max-width: 768px) {
+  .device-mockup-wrapper {
+    transform: scale(0.78);
+  }
+}
+
+@media (max-width: 480px) {
+  .device-mockup-wrapper {
+    transform: scale(0.7);
+  }
+}

@@ -1,0 +1,43 @@
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.tf-card { animation: fadeUp 0.55s cubic-bezier(.22,.68,0,1.2) both; }
+
+.tf-input-dark::placeholder { color: rgba(255,255,255,0.25); }
+.tf-input-dark:focus {
+  border-color: rgba(19,236,200,0.55) !important;
+  background: rgba(19,236,200,0.04) !important;
+}
+.tf-input-light::placeholder { color: rgba(13,27,25,0.3); }
+.tf-input-light:focus {
+  border-color: rgba(19,236,200,0.7) !important;
+  background: rgba(19,236,200,0.05) !important;
+}
+
+.tf-btn {
+  width: 100%;
+  height: 52px;
+  border: none;
+  border-radius: 12px;
+  font-family: 'Syne', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.03em;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.tf-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 24px rgba(19,236,200,0.35);
+}
+.tf-btn:disabled { cursor: not-allowed; }
+.tf-toggle { transition: background 0.2s, color 0.2s; }
+.tf-toggle:hover { opacity: 0.85; }
